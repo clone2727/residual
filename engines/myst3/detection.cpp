@@ -31,6 +31,10 @@ struct Myst3GameDescription {
 	int flags;
 };
 
+Common::Platform Myst3Engine::getPlatform() const {
+	return _gameDesc->desc.platform;
+}
+
 static const PlainGameDescriptor myst3Games[] = {
 	{"myst3", "Myst III Exile"},
 	{0, 0}
@@ -97,7 +101,7 @@ public:
 bool Myst3MetaEngine::createInstance(OSystem *syst, Engine **engine, const ADGameDescription *desc) const {
 	const Myst3GameDescription *gd = (const Myst3GameDescription *)desc;
 	if (gd) {
-		*engine = new Myst3Engine(syst, gd->flags);
+		*engine = new Myst3Engine(syst, gd);
 	}
 	return gd != 0;
 }

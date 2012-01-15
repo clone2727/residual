@@ -48,8 +48,8 @@
 
 namespace Myst3 {
 
-Myst3Engine::Myst3Engine(OSystem *syst, int gameFlags) :
-		Engine(syst), _system(syst),
+Myst3Engine::Myst3Engine(OSystem *syst, const Myst3GameDescription *gameDesc) :
+		Engine(syst), _system(syst), _gameDesc(gameDesc),
 		_db(0), _console(0), _scriptEngine(0),
 		_state(0), _node(0), _scene(0), _archiveNode(0),
 		_cursor(0), _inventory(0), _gfx(0), _menu(0),

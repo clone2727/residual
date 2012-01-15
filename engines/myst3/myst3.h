@@ -57,6 +57,7 @@ class Script;
 class Renderer;
 class Menu;
 struct NodeData;
+struct Myst3GameDescription;
 
 typedef Common::SharedPtr<NodeData> NodePtr;
 
@@ -77,8 +78,10 @@ public:
 	
 	Common::RandomSource *_rnd;
 
-	Myst3Engine(OSystem *syst, int gameFlags);
+	Myst3Engine(OSystem *syst, const Myst3GameDescription *gameDesc);
 	virtual ~Myst3Engine();
+
+	Common::Platform getPlatform() const;
 
 	Common::Error loadGameState(int slot);
 
@@ -111,6 +114,8 @@ public:
 	void processInput(bool lookOnly);
 	void drawFrame();
 private:
+	const Myst3GameDescription *_gameDesc;
+
 	Console *_console;
 	
 	Node *_node;
