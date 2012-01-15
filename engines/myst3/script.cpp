@@ -35,6 +35,16 @@ Script::Script(Myst3Engine *vm):
 
 	_puzzles = new Puzzles(_vm);
 
+	if (_vm->getPlatform() == Common::kPlatformPS2)
+		setupOpcodesPS2();
+	else
+		setupOpcodesWinMac();
+}
+
+Script::~Script() {
+	delete _puzzles;
+}
+
 #define OP_0(op, x) _commands.push_back(Command(op, &Script::x, #x, 0))
 #define OP_1(op, x, type1) _commands.push_back(Command(op, &Script::x, #x, 1, type1))
 #define OP_2(op, x, type1, type2) _commands.push_back(Command(op, &Script::x, #x, 2, type1, type2))
@@ -42,6 +52,7 @@ Script::Script(Myst3Engine *vm):
 #define OP_4(op, x, type1, type2, type3, type4) _commands.push_back(Command(op, &Script::x, #x, 4, type1, type2, type3, type4))
 #define OP_5(op, x, type1, type2, type3, type4, type5) _commands.push_back(Command(op, &Script::x, #x, 5, type1, type2, type3, type4, type5))
 
+void Script::setupOpcodesWinMac() {
 	OP_0(  0, badOpcode																					);
 	OP_1(  4, nodeCubeInit, 				kEvalValue													);
 	OP_5(  6, nodeCubeInitIndex, 			kVar, 		kEvalValue,	kEvalValue,	kEvalValue,	kEvalValue	);
@@ -189,6 +200,47 @@ Script::Script(Myst3Engine *vm):
 	OP_4(197, runPuzzle4,					kValue,		kValue,		kValue,		kValue					);
 	OP_0(239, drawOneFrame																				);
 	OP_0(249, newGame																					);
+}
+
+void Script::setupOpcodesPS2() {
+	OP_0(  0, badOpcode																					);
+	OP_1(  8, nodeMenuInit, 				kEvalValue													);
+	OP_0( 10, stopWholeScript																			);
+	OP_2( 12, spotItemAddCond,				kValue,		kCondition										);
+	OP_2( 20, movieInitCondPreload, 		kEvalValue,	kCondition										);
+	OP_4( 23, movieInitOverrridePosition,	kEvalValue,	kCondition,	kValue,		kValue					);
+	OP_3( 24, movieInitScriptedPosition,	kEvalValue,	kVar,		kVar								);
+	OP_1( 47, varSetZero,					kVar														);
+	OP_1( 48, varSetOne,					kVar														);
+	OP_2( 51, varSetValue,					kVar,		kValue											);
+	OP_1( 52, varToggle,					kVar														);
+	OP_1( 55, varAbsolute,					kVar														);
+	OP_1( 56, varDereference,				kVar														);
+	OP_3( 60, varRandRange,					kVar,		kValue,		kValue								);
+	OP_2( 76, varCopy,						kVar,		kVar											);
+	OP_1( 81, varIncrement,					kVar														);
+	OP_4( 84, varAddValueMaxLooping,		kValue,		kVar,		kValue,		kValue					);
+	OP_3( 88, varSubValueMin,				kValue,		kVar,		kValue								);
+	OP_2( 89, varZeroRange,					kVar,		kVar											);
+	OP_2( 93, varAddValue,					kValue,		kVar											);
+	OP_2( 97, varSubVarValue,				kVar,		kVar											);
+	OP_2( 98, varMultValue,					kVar,		kValue											);
+	OP_0(108, ifElse																					);
+	OP_1(110, ifCondition, 					kCondition													);
+	OP_2(112, ifCond1AndCond2, 				kCondition,	kCondition										);
+	OP_2(119, ifVarSupEqValue,				kVar,		kValue											);
+	OP_2(120, ifVarInfEqValue,				kVar,		kValue											);
+	OP_4(129, ifMouseIsInRect,				kValue,		kValue,		kValue,		kValue					);
+	OP_1(139, goToNodeTrans2,				kValue														);
+	OP_2(141, goToRoomNode,					kValue,		kValue											);
+	OP_3(172, changeNodeRoomAge,			kValue,		kValue,		kValue								);
+	OP_1(192, runScript,					kEvalValue													);
+	OP_1(194, runCommonScript,				kValue														);
+	OP_1(197, runPuzzle1,					kValue														);
+	OP_4(200, changeNodeRoomAgePS2,			kValue,		kValue,		kValue,		kValue					);
+	OP_0(235, drawOneFrame																				);
+	OP_0(245, newGame																					);
+}
 
 #undef OP_0
 #undef OP_1
@@ -196,11 +248,6 @@ Script::Script(Myst3Engine *vm):
 #undef OP_3
 #undef OP_4
 #undef OP_5
-}
-
-Script::~Script() {
-	delete _puzzles;
-}
 
 bool Script::run(const Common::Array<Opcode> *script) {
 	debugC(kDebugScript, "Script start %p", (void *) script);
@@ -1182,12 +1229,14 @@ void Script::ifElse(Context &c, const Opcode &cmd) {
 }
 
 void Script::goToElse(Context &c) {
+	int opcode = (_vm->getPlatform() == Common::kPlatformPS2) ? 108 : 104;
+
 
 	// Go to next command until an else statement is met
 	do {
 		c.op++;
 	} while (c.op != c.script->end()
-			&& c.op->op != 104);
+			&& c.op->op != opcode);
 }
 
 void Script::ifCondition(Context &c, const Opcode &cmd) {
@@ -1789,5 +1838,10 @@ void Script::newGame(Context &c, const Opcode &cmd) {
 	_vm->_state->newGame();
 }
 
+void Script::changeNodeRoomAgePS2(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Go to node %d room %d age %d unk %d", cmd.op, cmd.args[3], cmd.args[2], cmd.args[1], cmd.args[0]);
+
+	_vm->loadNode(cmd.args[3], cmd.args[2], cmd.args[1]);
+}
 
 } /* namespace Myst3 */

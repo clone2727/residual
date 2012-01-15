@@ -84,6 +84,8 @@ private:
 	Puzzles *_puzzles;
 
 	Common::Array<Command> _commands;
+	void setupOpcodesWinMac();
+	void setupOpcodesPS2();
 
 	const Command &findCommand(uint16 op);
 	const Common::String describeCommand(uint16 op);
@@ -243,6 +245,8 @@ private:
 	DECLARE_OPCODE(drawOneFrame);
 	DECLARE_OPCODE(newGame);
 
+	// PS2 specific opcodes
+	DECLARE_OPCODE(changeNodeRoomAgePS2);
 };
 
 } /* namespace Myst3 */
