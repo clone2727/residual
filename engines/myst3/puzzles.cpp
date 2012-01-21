@@ -34,13 +34,22 @@ Puzzles::Puzzles(Myst3Engine *vm) :
 Puzzles::~Puzzles() {
 }
 
-void Puzzles::run(uint16 id, uint16 arg0, uint16 arg1, uint16 arg3) {
+void Puzzles::run(uint16 id, uint16 arg0, uint16 arg1, uint16 arg2) {
 	switch (id) {
 	case 8:
 		journalSaavedro(arg0);
 		break;
 	case 9:
 		journalAtrus(arg0, arg1);
+		break;
+	case 14:
+		projectorLoadBitmap(arg0);
+		break;
+	case 15:
+		projectorAddSpotItem(arg0, arg1, arg2);
+		break;
+	case 16:
+		projectorUpdateCoordinates();
 		break;
 	case 20:
 		saveLoadMenu(arg0, arg1);
@@ -201,6 +210,89 @@ void Puzzles::saveLoadMenu(uint16 action, uint16 item) {
 	default:
 		warning("Save load menu action %d for item %d is not implemented", action, item);
 	}
+}
+
+static void copySurfaceRect(Graphics::Surface *dest, const Common::Point &destPoint, const Graphics::Surface *src) {
+	for (uint16 i = 0; i < src->h; i++)
+		memcpy(dest->getBasePtr(destPoint.x, i + destPoint.y), src->getBasePtr(0, i), src->pitch);
+}
+
+void Puzzles::projectorLoadBitmap(uint16 bitmap) {
+	assert(_vm->_projectorBackground == 0 && "Previous background not yet used.");
+
+	// This surface is freed by the destructor of the movie that uses it
+	_vm->_projectorBackground = new Graphics::Surface();
+	_vm->_projectorBackground->create(1024, 1024, Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+
+	const DirectorySubEntry *movieDesc = _vm->getFileDescription(0, bitmap, 0, DirectorySubEntry::kStillMovie);
+
+	if (!movieDesc)
+		error("Movie %d does not exist", bitmap);
+
+	// Rebuild the complete background image from the frames of the bink movie
+	Common::MemoryReadStream *movieStream = movieDesc->getData();
+	Video::SeekableBinkDecoder bink;
+	bink.loadStream(movieStream, Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+
+	for (uint i = 0; i < 1024; i += 256)
+		for (uint j = 0; j < 1024; j += 256) {
+			const Graphics::Surface *frame = bink.decodeNextFrame();
+			copySurfaceRect(_vm->_projectorBackground, Common::Point(j, i), frame);
+		}
+}
+
+void Puzzles::projectorAddSpotItem(uint16 bitmap, uint16 x, uint16 y) {
+	assert(_vm->_projectorBackground != 0 && "Projector background already used.");
+
+	const DirectorySubEntry *movieDesc = _vm->getFileDescription(0, bitmap, 0, DirectorySubEntry::kStillMovie);
+
+	if (!movieDesc)
+		error("Movie %d does not exist", bitmap);
+
+	// Rebuild the complete background image from the frames of the bink movie
+	Common::MemoryReadStream *movieStream = movieDesc->getData();
+	Video::SeekableBinkDecoder bink;
+	bink.loadStream(movieStream, Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+
+	const Graphics::Surface *frame = bink.decodeNextFrame();
+	copySurfaceRect(_vm->_projectorBackground, Common::Point(x, y), frame);
+}
+
+void Puzzles::projectorUpdateCoordinates() {
+	int16 x = CLIP<int16>(_vm->_state->getProjectorX(), 840, 9400);
+	int16 y = CLIP<int16>(_vm->_state->getProjectorY(), 840, 9400);
+	int16 zoom = CLIP<int16>(_vm->_state->getProjectorZoom(), 1280, 5120);
+	int16 blur = CLIP<int16>(_vm->_state->getProjectorBlur(), 400, 2470);
+
+	int16 halfZoom = zoom / 2;
+	if (x - halfZoom < 0)
+		x = halfZoom;
+	if (x + halfZoom > 10240)
+		x = 10240 - halfZoom;
+	if (y - halfZoom < 0)
+		y = halfZoom;
+	if (y + halfZoom > 10240)
+		y = 10240 - halfZoom;
+
+	int16 angleXOffset = _vm->_state->getProjectorAngleXOffset();
+	int16 angleYOffset = _vm->_state->getProjectorAngleYOffset();
+	int16 angleZoomOffset = _vm->_state->getProjectorAngleZoomOffset();
+	int16 angleBlurOffset = _vm->_state->getProjectorAngleBlurOffset();
+
+	int16 angleX = (angleXOffset + 200 * (5 * x - 4200) / 8560) % 1000;
+    int16 angleY = (angleYOffset + 200 * (5 * y - 4200) / 8560) % 1000;
+    int16 angleZoom = (angleZoomOffset + 200 * (5 * zoom - 6400) / 3840) % 1000;
+    int16 angleBlur = (angleBlurOffset + 200 * (5 * blur - 2000) / 2070) % 1000;
+
+    _vm->_state->setProjectorAngleX(angleX);
+	_vm->_state->setProjectorAngleY(angleY);
+	_vm->_state->setProjectorAngleZoom(angleZoom);
+	_vm->_state->setProjectorAngleBlur(angleBlur);
+
+    _vm->_state->setProjectorX(x);
+	_vm->_state->setProjectorY(y);
+	_vm->_state->setProjectorZoom(zoom);
+	_vm->_state->setProjectorBlur(blur);
 }
 
 } /* namespace Myst3 */

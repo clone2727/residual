@@ -31,6 +31,16 @@ GameState::GameState(Myst3Engine *vm):
 
 #define VAR(var, x, unk) _descriptions.setVal(var, Description(var, #x, unk));
 
+	VAR(47, ProjectorAngleX, true)
+	VAR(48, ProjectorAngleY, true)
+	VAR(49, ProjectorAngleZoom, true)
+	VAR(50, ProjectorAngleBlur, true)
+
+	VAR(57, DragEnded, true)
+	VAR(58, DragLeverSpeed, false)
+	VAR(59, DragPositionFound, true)
+	VAR(60, DragLeverPositionChanged, true)
+
 	VAR(61, LocationAge, false)
 	VAR(62, LocationRoom, false)
 	VAR(63, LocationNode, false)
@@ -41,9 +51,16 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(68, MenuSavedRoom, false)
 	VAR(69, MenuSavedNode, false)
 
+	VAR(71, FrameCountdown, true)
+
 	VAR(115, SunspotIntensity, false)
 	VAR(116, SunspotColor, false)
 	VAR(117, SunspotRadius, false)
+
+	VAR(136, CameraPitch, false)
+	VAR(137, CameraHeading, false)
+	VAR(140, CameraMinPitch, false)
+	VAR(141, CameraMaxPitch, false)
 
 	VAR(142, MovieOverrideStartFrame, true)
 	VAR(143, MovieOverrideEndFrame, true)
@@ -78,11 +95,20 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(172, MovieUnk172, true)
 	VAR(173, MoviePlayingVar, true)
 
-	VAR(178, MovieUnk178, true)
+	VAR(178, MovieUseBackground, false)
 
 	VAR(189, LocationNextNode, false)
 	VAR(190, LocationNextRoom, false)
 	VAR(191, LocationNextAge, false)
+
+	VAR(243, ProjectorX, false)
+	VAR(244, ProjectorY, false)
+	VAR(245, ProjectorZoom, false)
+	VAR(246, ProjectorBlur, false)
+	VAR(247, ProjectorAngleXOffset, false)
+	VAR(248, ProjectorAngleYOffset, false)
+	VAR(249, ProjectorAngleZoomOffset, false)
+	VAR(250, ProjectorAngleBlurOffset, false)
 
 	VAR(277, JournalAtrusState, false)
 	VAR(279, JournalSaavedroState, false)
@@ -105,6 +131,10 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(1351, MenuSaveLoadPageRight, false)
 	VAR(1352, MenuSaveLoadSelectedItem, false)
 	VAR(1353, MenuSaveLoadCurrentPage, false)
+
+	VAR(1399, DragLeverLimited, true)
+	VAR(1400, DragLeverLimitMin, true)
+	VAR(1401, DragLeverLimitMax, true)
 
 #undef VAR
 
@@ -163,21 +193,22 @@ void GameState::newGame() {
 	memset(&_data, 0, sizeof(_data));
 
 	_data.version = kSaveVersion;
+	_data.gameRunning = true;
 	_data.vars[0] = 0;
 	_data.vars[1] = 1;
 }
 
 bool GameState::load(const Common::String &file) {
-	Common::InSaveFile *save = _vm->getSaveFileManager()->openForLoading(file);
-	Common::Serializer s = Common::Serializer(save, 0);
+	Common::InSaveFile *saveFile = _vm->getSaveFileManager()->openForLoading(file);
+	Common::Serializer s = Common::Serializer(saveFile, 0);
 	syncWithSaveGame(s);
-	delete save;
+	delete saveFile;
 
 	return true;
 }
 
-bool GameState::save(Common::OutSaveFile *save) {
-	Common::Serializer s = Common::Serializer(0, save);
+bool GameState::save(Common::OutSaveFile *saveFile) {
+	Common::Serializer s = Common::Serializer(0, saveFile);
 	syncWithSaveGame(s);
 
 	return true;
@@ -281,6 +312,22 @@ const Common::String GameState::describeCondition(int16 condition) {
 			describeVar(var).c_str(),
 			(condition >= 0 && value >= 0) || (condition < 0 && value < 0) ? "==" : "!=",
 			value >= 0 ? value : 0);
+}
+
+void GameState::limitCubeCamera(float minPitch, float maxPitch, float minHeading, float maxHeading) {
+	_data.limitCubeCamera = true;
+	_data.minPitch = minPitch;
+	_data.maxPitch = maxPitch;
+	_data.minHeading = minHeading;
+	_data.maxHeading = maxHeading;
+}
+
+void GameState::updateFrameCounters() {
+	_data.currentFrame++;
+
+	int32 frameCountdown = getFrameCountdown();
+	if (frameCountdown > 0)
+		setFrameCountdown(--frameCountdown);
 }
 
 } /* namespace Myst3 */

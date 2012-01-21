@@ -42,6 +42,7 @@
 #include "engines/myst3/inventory.h"
 #include "engines/myst3/script.h"
 #include "engines/myst3/menu.h"
+#include "engines/myst3/sound.h"
 
 #include "graphics/jpeg.h"
 #include "graphics/conversion.h"
@@ -53,8 +54,8 @@ Myst3Engine::Myst3Engine(OSystem *syst, const Myst3GameDescription *gameDesc) :
 		_db(0), _console(0), _scriptEngine(0),
 		_state(0), _node(0), _scene(0), _archiveNode(0),
 		_cursor(0), _inventory(0), _gfx(0), _menu(0),
-		_rnd(0), _shouldQuit(false),
-		_menuAction(0) {
+		_rnd(0), _sound(0), _shouldQuit(false),
+		_menuAction(0), _projectorBackground(0) {
 	DebugMan.addDebugChannel(kDebugVariable, "Variable", "Track Variable Accesses");
 	DebugMan.addDebugChannel(kDebugSaveLoad, "SaveLoad", "Track Save/Load Function");
 	DebugMan.addDebugChannel(kDebugScript, "Script", "Track Script Execution");
@@ -103,6 +104,7 @@ Myst3Engine::~Myst3Engine() {
 	delete _console;
 	delete _state;
 	delete _rnd;
+	delete _sound;
 	delete _gfx;
 }
 
@@ -111,6 +113,7 @@ Common::Error Myst3Engine::run() {
 	const int h = 480;
 
 	_gfx = new Renderer(_system);
+	_sound = new Sound(this);
 	_rnd = new Common::RandomSource("sprint");
 	_console = new Console(this);
 	_scriptEngine = new Script(this);
@@ -144,8 +147,10 @@ Common::Error Myst3Engine::run() {
 	loadNode(1, 101, 1);
 
 	while (!_shouldQuit) {
+		_sound->update();
 		runNodeBackgroundScripts();
 		processInput(false);
+		updateCursor();
 
 		if (_menuAction) {
 			_menu->updateMainMenu(_menuAction);
@@ -190,7 +195,8 @@ Common::Array<HotSpot *> Myst3Engine::listHoveredHotspots(NodePtr nodeData) {
 
 		for (uint j = 0; j < nodeData->hotspots.size(); j++) {
 			if (nodeData->hotspots[j].isPointInRectsCube(mouse)
-					&& _state->evaluate(nodeData->hotspots[j].condition)) {
+					&& _state->evaluate(nodeData->hotspots[j].condition)
+					&& nodeData->hotspots[j].cursor < 12) {
 				hovered.push_back(&nodeData->hotspots[j]);
 			}
 		}
@@ -211,8 +217,9 @@ Common::Array<HotSpot *> Myst3Engine::listHoveredHotspots(NodePtr nodeData) {
 		}
 
 		for (uint j = 0; j < nodeData->hotspots.size(); j++) {
-			if (nodeData->hotspots[j].isPointInRectsFrame(scaledMouse)
-					&& _state->evaluate(nodeData->hotspots[j].condition)) {
+			if (nodeData->hotspots[j].isPointInRectsFrame(_state, scaledMouse)
+					&& _state->evaluate(nodeData->hotspots[j].condition)
+					&& nodeData->hotspots[j].cursor < 12) {
 				hovered.push_back(&nodeData->hotspots[j]);
 			}
 		}
@@ -240,7 +247,7 @@ void Myst3Engine::updateCursor() {
 void Myst3Engine::processInput(bool lookOnly) {
 	// Process events
 	Common::Event event;
-	while (_system->getEventManager()->pollEvent(event)) {
+	while (getEventManager()->pollEvent(event)) {
 		// Check for "Hard" quit"
 		if (event.type == Common::EVENT_QUIT) {
 			_shouldQuit = true;
@@ -250,8 +257,6 @@ void Myst3Engine::processInput(bool lookOnly) {
 			}
 
 			_cursor->updatePosition(event.relMouse);
-
-			updateCursor();
 
 		} else if (event.type == Common::EVENT_LBUTTONDOWN) {
 			// Skip the event when in look only mode
@@ -268,8 +273,12 @@ void Myst3Engine::processInput(bool lookOnly) {
 
 			if (hovered.size() > 0) {
 				_scriptEngine->run(&hovered.front()->script);
+				continue;
 			}
 			
+			// Bad click
+			_sound->play(697, 5);
+
 		} else if (event.type == Common::EVENT_KEYDOWN) {
 			// Save file name input
 			_menu->handleInput(event.kbd);
@@ -324,6 +333,11 @@ void Myst3Engine::drawFrame() {
 
 	if (_state->getViewType() == kCube) {
 		_gfx->setupCameraOrtho2D();
+		
+		// Draw overlay 2D movies
+		for (uint i = 0; i < _movies.size(); i++) {
+			_movies[i]->drawForce2d();
+		}
 	}
 
 	if (_state->getViewType() != kMenu) {
@@ -341,7 +355,7 @@ void Myst3Engine::drawFrame() {
 
 	_system->updateScreen();
 	_system->delayMillis(10);
-	_state->incFrameCount();
+	_state->updateFrameCounters();
 }
 
 void Myst3Engine::goToNode(uint16 nodeID, uint transition) {
@@ -361,10 +375,8 @@ void Myst3Engine::goToNode(uint16 nodeID, uint transition) {
 
 void Myst3Engine::loadNode(uint16 nodeID, uint32 roomID, uint32 ageID) {
 	if (_node) {
-		for (uint i = 0; i < _movies.size(); i++) {
-			delete _movies[i];
-		}
-		_movies.clear();
+		// Delete all movies
+		removeMovie(0);
 
 		delete _node;
 		_node = 0;
@@ -494,7 +506,16 @@ void Myst3Engine::runScriptsFromNode(uint16 nodeID, uint32 roomID, uint32 ageID)
 }
 
 void Myst3Engine::loadMovie(uint16 id, uint16 condition, bool resetCond, bool loop) {
-	ScriptedMovie *movie = new ScriptedMovie(this, id);
+	ScriptedMovie *movie;
+	
+	if (!_state->getMovieUseBackground()) {
+		movie = new ScriptedMovie(this, id);
+	} else {
+		movie = new ProjectorMovie(this, id, _projectorBackground);
+		_projectorBackground = 0;
+		_state->setMovieUseBackground(0);
+	}
+	
 	movie->setCondition(condition);
 	movie->setDisableWhenComplete(resetCond);
 	movie->setLoop(loop);
@@ -539,14 +560,10 @@ void Myst3Engine::loadMovie(uint16 id, uint16 condition, bool resetCond, bool lo
 		_state->setMoviePlayingVar(0);
 	}
 
-	if (_state->getMovieOverridePosU()) {
+	if (_state->getMovieOverridePosition()) {
 		movie->setPosU(_state->getMovieOverridePosU());
-		_state->setMovieOverridePosU(0);
-	}
-
-	if (_state->getMovieOverridePosV()) {
 		movie->setPosV(_state->getMovieOverridePosV());
-		_state->setMovieOverridePosV(0);
+		_state->setMovieOverridePosition(0);
 	}
 
 	if (_state->getMovieUVar()) {
@@ -567,6 +584,11 @@ void Myst3Engine::loadMovie(uint16 id, uint16 condition, bool resetCond, bool lo
 	if (_state->getMovieConditionBit()) {
 		movie->setConditionBit(_state->getMovieConditionBit());
 		_state->setMovieConditionBit(0);
+	}
+
+	if (_state->getMovieForce2d()) {
+		movie->setForce2d(_state->getMovieForce2d());
+		_state->setMovieForce2d(0);
 	}
 
 	_movies.push_back(movie);
@@ -600,6 +622,23 @@ void Myst3Engine::playSimpleMovie(uint16 id) {
 	_drawables.pop_back();
 }
 
+void Myst3Engine::removeMovie(uint16 id) {
+	if (id == 0) {
+		for (uint i = 0; i < _movies.size(); i++)
+			delete _movies[i];
+
+		_movies.clear();
+		return;
+	} else {
+		for (uint i = 0; i < _movies.size(); i++)
+			if (_movies[i]->getId() == id) {
+				delete _movies[i];
+				_movies.remove_at(i);
+				break;
+			}
+	}
+}
+
 void Myst3Engine::setMovieLooping(uint16 id, bool loop) {
 	for (uint i = 0; i < _movies.size(); i++) {
 		if (_movies[i]->getId() == id) {
@@ -627,12 +666,12 @@ void Myst3Engine::addSunSpot(uint16 pitch, uint16 heading, uint16 intensity,
 	s.pitch = pitch;
 	s.heading = heading;
 	s.intensity = intensity * 2.55;
-	s.color = color & 0xF | 16
-			* (color & 0xF | 16
-			* ((color >> 4) & 0xF | 16
-			* ((color >> 4) & 0xF | 16
-			* ((color >> 8) & 0xF | 16
-			* ((color >> 8) & 0xF)))));
+	s.color = (color & 0xF) | 16
+			* ((color & 0xF) | 16
+			* (((color >> 4) & 0xF) | 16
+			* (((color >> 4) & 0xF) | 16
+			* (((color >> 8) & 0xF) | 16
+			* (((color >> 8) & 0xF))))));
 	s.var = var;
 	s.variableIntensity = varControlledIntensity;
 	s.radius = radius;
@@ -673,7 +712,7 @@ Graphics::Surface *Myst3Engine::loadTexture(uint16 id) {
 
 	uint32 magic = data->readUint32LE();
 	if (magic != 0x2E544558)
-		error("Wrong texture format", id);
+		error("Wrong texture format %d", id);
 
 	data->readUint32LE(); // unk 1
 	uint32 width = data->readUint32LE();

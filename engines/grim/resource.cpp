@@ -37,6 +37,7 @@
 #include "engines/grim/inputdialog.h"
 #include "engines/grim/debug.h"
 #include "engines/grim/patchr.h"
+#include "engines/grim/update/update.h"
 #include "common/algorithm.h"
 #include "common/zlib.h"
 #include "gui/message.h"
@@ -65,7 +66,7 @@ ResourceLoader::ResourceLoader() {
 	_cacheMemorySize = 0;
 
 	Lab *l;
-	Common::ArchiveMemberList files;
+	Common::ArchiveMemberList files, updFiles;
 
 	if (g_grim->getGameType() == GType_GRIM) {
 		if (g_grim->getGameFlags() & ADGF_DEMO) {
@@ -74,6 +75,15 @@ ResourceLoader::ResourceLoader() {
 			SearchMan.listMatchingMembers(files, "sound001.lab");
 			SearchMan.listMatchingMembers(files, "voice001.lab");
 		} else {
+			//Load the update from the executable
+			Common::File *updStream = new Common::File();
+			if (updStream && updStream->open("gfupd101.exe")) {
+				Common::Archive *update = loadUpdateArchive(updStream);
+				if (update)
+					SearchMan.add("update", update, 1);
+			} else
+				delete updStream;
+
 			if (!SearchMan.hasFile("residualvm-grim-patch.lab"))
 				error("residualvm-grim-patch.lab not found");
 
@@ -99,20 +109,50 @@ ResourceLoader::ResourceLoader() {
 				files.erase(datausr_it);
 			}
 		}
-	}
+	} else if (g_grim->getGameType() == GType_MONKEY4) {
+		if (g_grim->getGameFlags() == ADGF_DEMO) {
+			SearchMan.listMatchingMembers(files, "i9n.lab");
+			SearchMan.listMatchingMembers(files, "lip.lab");
+			SearchMan.listMatchingMembers(files, "MagDemo.lab");
+			SearchMan.listMatchingMembers(files, "tile.lab");
+			SearchMan.listMatchingMembers(files, "voice.lab");
+		} else {
+			if (g_grim->getGamePlatform() == Common::kPlatformWindows) {
+				//Load the update from the executable
+				SearchMan.listMatchingMembers(updFiles, "MonkeyUpdate.exe");
+				SearchMan.listMatchingMembers(updFiles, "MonkeyUpdate_???.exe");
+				for (Common::ArchiveMemberList::const_iterator x = updFiles.begin(); x != updFiles.end(); ++x) {
+					Common::SeekableReadStream *updStream;
+					updStream = (*x)->createReadStream();
 
-	if (g_grim->getGameType() == GType_MONKEY4 && g_grim->getGameFlags() == ADGF_DEMO)
-		SearchMan.listMatchingMembers(files, "*.lab");
-	else if (g_grim->getGameType() == GType_MONKEY4)
-		SearchMan.listMatchingMembers(files, "*.m4b");
+					Common::Archive *update = loadUpdateArchive(updStream);
+					if (update)
+						SearchMan.add("update", update, 1);
+				}
+			}
+
+			SearchMan.listMatchingMembers(files, "local.m4b");
+			SearchMan.listMatchingMembers(files, "i9n.m4b");
+			SearchMan.listMatchingMembers(files, "art???.m4b");
+			SearchMan.listMatchingMembers(files, "lip.m4b");
+			SearchMan.listMatchingMembers(files, "local.m4b");
+			SearchMan.listMatchingMembers(files, "sfx.m4b");
+			SearchMan.listMatchingMembers(files, "voice???.m4b");
+		}
+	}
 
 	if (files.empty())
 		error("Cannot find game data - check configuration file");
 
+	//load labs
 	int priority = files.size();
 	for (Common::ArchiveMemberList::const_iterator x = files.begin(); x != files.end(); ++x) {
 		Common::String filename = (*x)->getName();
 		filename.toLowercase();
+
+		//Avoid duplicates
+		if (_files.hasArchive(filename))
+			continue;
 
 		l = new Lab();
 		if (l->open(filename))
@@ -230,6 +270,7 @@ Common::SeekableReadStream *ResourceLoader::openNewStreamFile(Common::String fna
 			byte *buf = new byte[size];
 			s->read(buf, size);
 			putIntoCache(fname, buf, size);
+			delete s;
 			s = new Common::MemoryReadStream(buf, size);
 		}
 	} else {
@@ -261,6 +302,7 @@ Bitmap *ResourceLoader::loadBitmap(const Common::String &filename) {
 	}
 
 	Bitmap *result = new Bitmap(filename, stream);
+	delete stream;
 
 	return result;
 }
@@ -273,6 +315,7 @@ CMap *ResourceLoader::loadColormap(const Common::String &filename) {
 
 	CMap *result = new CMap(filename, stream);
 	_colormaps.push_back(result);
+	delete stream;
 
 	return result;
 }
@@ -303,6 +346,7 @@ Costume *ResourceLoader::loadCostume(const Common::String &filename, Costume *pr
 	}
 
 	Costume *result = new Costume(filename, stream, prevCost);
+	delete stream;
 
 	return result;
 }
@@ -315,6 +359,7 @@ Font *ResourceLoader::loadFont(const Common::String &filename) {
 		error("Could not find font file %s", filename.c_str());
 
 	Font *result = new Font(filename, stream);
+	delete stream;
 
 	return result;
 }
@@ -328,6 +373,7 @@ KeyframeAnim *ResourceLoader::loadKeyframe(const Common::String &filename) {
 
 	KeyframeAnim *result = new KeyframeAnim(filename, stream);
 	_keyframeAnims.push_back(result);
+	delete stream;
 
 	return result;
 }
@@ -349,6 +395,7 @@ LipSync *ResourceLoader::loadLipSync(const Common::String &filename) {
 		delete result;
 		result = NULL;
 	}
+	delete stream;
 
 	return result;
 }
@@ -363,6 +410,7 @@ Material *ResourceLoader::loadMaterial(const Common::String &filename, CMap *c) 
 		error("Could not find material %s", filename.c_str());
 
 	Material *result = new Material(fname, stream, c);
+	delete stream;
 
 	return result;
 }
@@ -377,6 +425,7 @@ Model *ResourceLoader::loadModel(const Common::String &filename, CMap *c, Model 
 
 	Model *result = new Model(filename, stream, c, parent);
 	_models.push_back(result);
+	delete stream;
 
 	return result;
 }
@@ -393,6 +442,7 @@ EMIModel *ResourceLoader::loadModelEMI(const Common::String &filename, EMIModel 
 
 	EMIModel *result = new EMIModel(filename, stream, parent);
 	_emiModels.push_back(result);
+	delete stream;
 
 	return result;
 }
@@ -408,6 +458,7 @@ Skeleton *ResourceLoader::loadSkeleton(const Common::String &filename) {
 	}
 
 	Skeleton *result = new Skeleton(filename, stream);
+	delete stream;
 
 	return result;
 }

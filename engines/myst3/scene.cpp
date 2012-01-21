@@ -47,10 +47,39 @@ void Scene::updateCamera(Common::Point &mouse) {
 	else if (heading < 0.0f)
 		heading += 360.0f;
 
+	// Keep heading within allowed values
+	if (_vm->_state->isCameraLimited()) {
+		float minHeading = _vm->_state->getMinHeading();
+		float maxHeading = _vm->_state->getMaxHeading();
+
+		if (minHeading < maxHeading) {
+			heading = CLIP(heading, minHeading, maxHeading);
+		} else {
+			if (heading < minHeading && heading > maxHeading) {
+				uint distToMin = abs(heading - minHeading);
+				uint distToMax = abs(heading - maxHeading);
+				if (distToMin > distToMax)
+					heading = maxHeading;
+				else
+					heading = minHeading;
+			}
+		}
+	}
+
 	// Keep pitch within allowed values
-	pitch = CLIP(pitch, -60.0f, 80.0f);
+	float minPitch = _vm->_state->getCameraMinPitch();
+	float maxPitch = _vm->_state->getCameraMaxPitch();
+
+	if (_vm->_state->isCameraLimited()) {
+		minPitch = _vm->_state->getMinPitch();
+		maxPitch = _vm->_state->getMaxPitch();
+	}
+
+	pitch = CLIP(pitch, minPitch, maxPitch);
 
 	_vm->_state->lookAt(pitch, heading);
+	_vm->_state->setCameraPitch(pitch);
+	_vm->_state->setCameraHeading(heading);
 }
 
 void Scene::drawBlackBorders() {
@@ -74,6 +103,29 @@ void Scene::drawSunspotFlare(const SunSpot &s) {
 	uint32 color = Graphics::ARGBToColor< Graphics::ColorMasks<8888> >(a, r, g, b);
 
 	_vm->_gfx->drawRect2D(frame, color);
+}
+
+
+static Math::Vector3d directionToVector(float pitch, float heading) {
+	Math::Vector3d v;
+
+	float radHeading = Math::degreeToRadian(heading);
+	float radPitch = Math::degreeToRadian(pitch);
+
+	v.setValue(0, cos(radPitch) * cos(radHeading));
+	v.setValue(1, sin(radPitch));
+	v.setValue(2, cos(radPitch) * sin(radHeading));
+
+	return v;
+}
+
+float Scene::distanceToZone(float spotHeading, float spotPitch, float spotRadius, float heading, float pitch) {
+	Math::Vector3d vLookAt = directionToVector(pitch, heading);
+	Math::Vector3d vSun = directionToVector(spotPitch, spotHeading);
+	float dotProduct = Math::Vector3d::dotProduct(vLookAt, -vSun);
+
+	float distance = (0.05 * spotRadius - (dotProduct + 1.0) * 90) / (0.05 * spotRadius);
+	return CLIP<float>(distance, 0.0, 1.0);
 }
 
 } // end of namespace Myst3

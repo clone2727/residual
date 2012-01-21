@@ -20,40 +20,53 @@
  *
  */
 
-#ifndef PUZZLES_H_
-#define PUZZLES_H_
+#ifndef SOUND_H_
+#define SOUND_H_
 
-#include "common/scummsys.h"
-
-#include "graphics/surface.h"
+#include "common/str.h"
 
 namespace Myst3 {
 
 class Myst3Engine;
 
-class Puzzles {
+class SoundChannel {
 public:
-	Puzzles(Myst3Engine *vm);
-	virtual ~Puzzles();
+	SoundChannel(Myst3Engine *vm);
+	virtual ~SoundChannel();
 
-	void run(uint16 id, uint16 arg0 = 0, uint16 arg1 = 0, uint16 arg2 = 0);
+	void play(uint32 id, uint32 volume);
+	void update();
+
+	bool _playing;
+	uint32 _id;
 
 private:
 	Myst3Engine *_vm;
 
-	void journalSaavedro(int16 move);
-	uint16 _journalSaavedroGetNode(uint16 chapter);
-	uint16 _journalSaavedroPageCount(uint16 chapter);
-	bool _journalSaavedroHasChapter(uint16 chapter);
-	uint16 _journalSaavedroNextChapter(uint16 chapter, bool forward);
+	Common::String _name;
+	uint32 _volume;
+	Audio::RewindableAudioStream *_stream;
+	Audio::SoundHandle _handle;
 
-	void journalAtrus(uint16 node, uint16 var);
-	void mainMenu(uint16 action);
-	void saveLoadMenu(uint16 action, uint16 item);
-	void projectorLoadBitmap(uint16 bitmap);
-	void projectorAddSpotItem(uint16 bitmap, uint16 x, uint16 y);
-	void projectorUpdateCoordinates();
+	Audio::RewindableAudioStream *makeAudioStream(const Common::String &name) const;
+};
+
+class Sound {
+public:
+	Sound(Myst3Engine *vm);
+	virtual ~Sound();
+
+	void play(uint32 id, uint32 volume, uint16 heading = 0, uint16 attenuation = 0);
+	void update();
+
+private:
+	static const uint kNumChannels = 13;
+
+	Myst3Engine *_vm;
+	SoundChannel *_channels[kNumChannels];
+
+	SoundChannel *getChannelForSound(uint32 id, uint priority);
 };
 
 } /* namespace Myst3 */
-#endif /* PUZZLES_H_ */
+#endif /* SOUND_H_ */

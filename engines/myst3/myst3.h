@@ -56,6 +56,7 @@ class Database;
 class Script;
 class Renderer;
 class Menu;
+class Sound;
 struct NodeData;
 struct Myst3GameDescription;
 
@@ -68,15 +69,19 @@ protected:
 	virtual Common::Error run();
 	virtual GUI::Debugger *getDebugger() { return (GUI::Debugger *)_console; }
 public:
-	OSystem *_system;
 	GameState *_state;
+	Scene *_scene;
 	Cursor *_cursor;
 	Inventory *_inventory;
 	Renderer *_gfx;
 	Menu *_menu;
 	Database *_db;
+	Sound *_sound;
 	
 	Common::RandomSource *_rnd;
+
+	// Used by the projectors on J'nanin, see puzzle #14
+	Graphics::Surface *_projectorBackground;
 
 	Myst3Engine(OSystem *syst, const Myst3GameDescription *gameDesc);
 	virtual ~Myst3Engine();
@@ -101,6 +106,7 @@ public:
 
 	void loadMovie(uint16 id, uint16 condition, bool resetCond, bool loop);
 	void playSimpleMovie(uint16 id);
+	void removeMovie(uint16 id);
 	void setMovieLooping(uint16 id, bool loop);
 
 	void addSpotItem(uint16 id, uint16 condition, bool fade);
@@ -116,10 +122,10 @@ public:
 private:
 	const Myst3GameDescription *_gameDesc;
 
+	OSystem *_system;
 	Console *_console;
 	
 	Node *_node;
-	Scene *_scene;
 
 	Common::Array<Archive *> _archivesCommon;
 	Archive *_archiveNode;

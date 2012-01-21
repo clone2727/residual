@@ -27,6 +27,9 @@
 #include "engines/myst3/cursor.h"
 #include "engines/myst3/inventory.h"
 #include "engines/myst3/puzzles.h"
+#include "engines/myst3/sound.h"
+
+#include "common/events.h"
 
 namespace Myst3 {
 
@@ -75,6 +78,8 @@ void Script::setupOpcodesWinMac() {
 	OP_2( 24, movieInitFrameVarPreload,		kEvalValue,	kVar											);
 	OP_4( 25, movieInitOverrridePosition,	kEvalValue,	kCondition,	kValue,		kValue					);
 	OP_3( 26, movieInitScriptedPosition,	kEvalValue,	kVar,		kVar								);
+	OP_1( 27, movieRemove,					kEvalValue													);
+	OP_0( 28, movieRemoveAll																			);
 	OP_1( 29, movieSetLooping,				kValue														);
 	OP_1( 30, movieSetNotLooping,			kValue														);
 	OP_2( 35, sunspotAdd,					kValue,		kValue											);
@@ -106,6 +111,8 @@ void Script::setupOpcodesWinMac() {
 	OP_3( 61, varRandRange,					kVar,		kValue,		kValue								);
 	OP_5( 62, polarToRectSimple,			kVar,		kVar,		kValue,		kValue, 	kValue		); // Seven args
 	OP_5( 63, polarToRect,					kVar,		kVar,		kValue,		kValue, 	kValue		); // Ten args
+	OP_4( 64, varSetDistanceToZone,			kVar,		kValue,		kValue,		kValue					);
+	OP_4( 65, varSetMinDistanceToZone,		kVar,		kValue,		kValue,		kValue					);
 	OP_2( 67, varRemoveBits,				kVar,		kValue											);
 	OP_2( 68, varToggleBits,				kVar,		kValue											);
 	OP_2( 69, varCopy,						kVar,		kVar											);
@@ -135,6 +142,7 @@ void Script::setupOpcodesWinMac() {
 	OP_2( 93, varMultVarValue,				kVar,		kVar											);
 	OP_2( 94, varDivValue,					kVar,		kValue											);
 	OP_2( 95, varDivVarValue,				kVar,		kVar											);
+	OP_5( 96, varCrossMultiplication,		kVar,		kValue,		kValue,		kValue,		kValue		);
 	OP_2( 97, varMinValue,					kVar,		kValue											);
 	OP_3( 98, varClipValue,					kVar,		kValue,		kValue								);
 	OP_3( 99, varClipChangeBound,			kVar,		kValue,		kValue								);
@@ -165,6 +173,9 @@ void Script::setupOpcodesWinMac() {
 	OP_2(124, ifPitchInRange,				kValue,		kValue											);
 	OP_4(125, ifHeadingPitchInRect,			kValue,		kValue,		kValue,		kValue					);
 	OP_4(126, ifMouseIsInRect,				kValue,		kValue,		kValue,		kValue					);
+	OP_5(127, leverDrag,					kValue,		kValue,		kValue,		kValue, 	kVar		); // Six args
+	OP_5(130, leverDragXY,					kVar, 		kVar,		kValue,		kValue,		kValue		);
+	OP_5(134, runScriptWhileDragging,		kVar, 		kVar,		kValue,		kValue, 	kVar		); // Eight args
 	OP_3(135, chooseNextNode,				kCondition, kValue,		kValue								);
 	OP_2(136, goToNodeTransition,			kValue,		kValue											);
 	OP_1(137, goToNodeTrans2,				kValue														);
@@ -174,6 +185,11 @@ void Script::setupOpcodesWinMac() {
 	OP_2(141, zipToRoomNode,				kValue,		kValue											);
 	OP_1(147, moviePlay, 					kEvalValue													);
 	OP_1(148, moviePlaySynchronized,		kEvalValue													);
+	OP_4(157, cameraLimitMovement,			kValue,		kValue,		kValue,		kValue					);
+	OP_0(158, cameraFreeMovement																		);
+	OP_2(159, cameraLookAt,					kValue,		kValue											);
+	OP_1(160, cameraLookAtVar,				kVar														);
+	OP_1(161, cameraGetLookAt,				kVar														);
 	OP_1(164, changeNode,					kValue														);
 	OP_2(165, changeNodeRoom,				kValue,		kValue											);
 	OP_3(166, changeNodeRoomAge,			kValue,		kValue,		kValue								);
@@ -198,6 +214,10 @@ void Script::setupOpcodesWinMac() {
 	OP_2(195, runPuzzle2,					kValue,		kValue											);
 	OP_3(196, runPuzzle3,					kValue,		kValue,		kValue								);
 	OP_4(197, runPuzzle4,					kValue,		kValue,		kValue,		kValue					);
+	OP_1(205, soundPlay,					kEvalValue													);
+	OP_2(206, soundPlayVolume,				kEvalValue,	kEvalValue										);
+	OP_3(207, soundPlayVolumeDirection,		kEvalValue,	kEvalValue,	kEvalValue							);
+	OP_4(208, soundPlayVolumeDirectionAtt,	kEvalValue,	kEvalValue,	kEvalValue,	kEvalValue				);
 	OP_0(239, drawOneFrame																				);
 	OP_0(249, newGame																					);
 }
@@ -557,15 +577,30 @@ void Script::movieInitScriptedPosition(Context &c, const Opcode &cmd) {
 	_vm->loadMovie(movieid, 1, false, true);
 }
 
+void Script::movieRemove(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Remove movie %d ",
+			cmd.op, cmd.args[0]);
+
+	uint16 movieid = _vm->_state->valueOrVarValue(cmd.args[0]);
+	_vm->removeMovie(movieid);
+}
+
+void Script::movieRemoveAll(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Remove all movies",
+			cmd.op);
+
+	_vm->removeMovie(0);
+}
+
 void Script::movieSetLooping(Context &c, const Opcode &cmd) {
-	debugC(kDebugScript, "Opcode %d: Set movie % to loop",
+	debugC(kDebugScript, "Opcode %d: Set movie %d to loop",
 			cmd.op, cmd.args[0]);
 
 	_vm->setMovieLooping(cmd.args[0], true);
 }
 
 void Script::movieSetNotLooping(Context &c, const Opcode &cmd) {
-	debugC(kDebugScript, "Opcode %d: Set movie % not to loop",
+	debugC(kDebugScript, "Opcode %d: Set movie %d not to loop",
 			cmd.op, cmd.args[0]);
 
 	_vm->setMovieLooping(cmd.args[0], false);
@@ -842,6 +877,25 @@ void Script::polarToRect(Context &c, const Opcode &cmd)	{
 	_vm->_state->setVar(cmd.args[1], posY);
 }
 
+void Script::varSetDistanceToZone(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Set var %d to distance to point %d %d", cmd.op, cmd.args[0], cmd.args[1], cmd.args[2]);
+
+	float heading = _vm->_state->getLookAtHeading();
+	float pitch = _vm->_state->getLookAtPitch();
+	int16 distance = 100 * _vm->_scene->distanceToZone(cmd.args[1], cmd.args[2], cmd.args[3], heading, pitch);
+	_vm->_state->setVar(cmd.args[0], distance);
+}
+
+void Script::varSetMinDistanceToZone(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Set var %d to distance to point %d %d if lower", cmd.op, cmd.args[0], cmd.args[1], cmd.args[2]);
+
+	float heading = _vm->_state->getLookAtHeading();
+	float pitch = _vm->_state->getLookAtPitch();
+	int16 distance = 100 * _vm->_scene->distanceToZone(cmd.args[1], cmd.args[2], cmd.args[3], heading, pitch);
+	if (distance < _vm->_state->getVar(cmd.args[0]))
+		_vm->_state->setVar(cmd.args[0], distance);
+}
+
 void Script::varRemoveBits(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: Remove bits %d from var %d", cmd.op, cmd.args[1], cmd.args[0]);
 
@@ -1016,7 +1070,7 @@ void Script::varZeroRange(Context &c, const Opcode &cmd) {
 	if (cmd.args[0] > cmd.args[1])
 		error("Opcode %d, Incorrect range, %d -> %d", cmd.op, cmd.args[0], cmd.args[1]);
 
-	for (uint i = cmd.args[0]; i <= cmd.args[1]; i++)
+	for (int16 i = cmd.args[0]; i <= cmd.args[1]; i++)
 		_vm->_state->setVar(i, 0);
 }
 
@@ -1027,7 +1081,7 @@ void Script::varCopyRange(Context &c, const Opcode &cmd) {
 	if (cmd.args[2] <= 0)
 		return;
 
-	for (uint i = 0; i < cmd.args[2]; i++)
+	for (int16 i = 0; i < cmd.args[2]; i++)
 		_vm->_state->setVar(cmd.args[1] + i, _vm->_state->getVar(cmd.args[0] + i));
 }
 
@@ -1038,7 +1092,7 @@ void Script::varSetRange(Context &c, const Opcode &cmd) {
 	if (cmd.args[0] > cmd.args[1])
 		error("Opcode %d, Incorrect range, %d -> %d", cmd.op, cmd.args[0], cmd.args[1]);
 
-	for (uint i = cmd.args[0]; i <= cmd.args[1]; i++)
+	for (int16 i = cmd.args[0]; i <= cmd.args[1]; i++)
 		_vm->_state->setVar(i, cmd.args[2]);
 }
 
@@ -1136,6 +1190,22 @@ void Script::varDivVarValue(Context &c, const Opcode &cmd) {
 	_vm->_state->setVar(cmd.args[0], value);
 }
 
+void Script::varCrossMultiplication(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Cross multiply var %d from range %d %d to range %d %d",
+			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3], cmd.args[4]);
+
+	int32 value = _vm->_state->getVar(cmd.args[0]);
+
+	if (value == 0)
+		return;
+
+	int32 temp = abs(value) - cmd.args[1];
+	temp *= (cmd.args[4] - cmd.args[3]) / (cmd.args[2] - cmd.args[1]);
+	temp += cmd.args[3];
+
+	_vm->_state->setVar(cmd.args[0], value > 0 ? temp : -temp);
+}
+
 void Script::varMinValue(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: Set var %d to min between %d and var value", cmd.op, cmd.args[0], cmd.args[1]);
 
@@ -1198,7 +1268,7 @@ void Script::varRatioToPercents(Context &c, const Opcode &cmd) {
 	int32 value = _vm->_state->getVar(cmd.args[0]);
 
 	value = 100 * (cmd.args[2] - abs(value - cmd.args[1])) / cmd.args[2];
-	value = MAX(0, value);
+	value = MAX<int32>(0, value);
 
 	_vm->_state->setVar(cmd.args[0], value);
 }
@@ -1499,6 +1569,191 @@ void Script::ifMouseIsInRect(Context &c, const Opcode &cmd) {
 	goToElse(c);
 }
 
+void Script::leverDrag(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Drag lever for var %d wit script %d", cmd.op, cmd.args[4], cmd.args[6]);
+
+	int16 minPosX = cmd.args[0];
+	int16 minPosY = cmd.args[1];
+	int16 maxPosX = cmd.args[2];
+	int16 maxPosY = cmd.args[3];
+	int16 var = cmd.args[4];
+	int16 numPositions = cmd.args[5];
+	int16 script = cmd.args[6];
+	int16 topOffset = _vm->_state->getViewType() != kMenu ? 30 : 0;
+
+	_vm->_cursor->changeCursor(2);
+
+	bool mousePressed = true;
+	while (true) {
+		float ratioPosition = 0.0;
+		// Compute the distance to the minimum lever point
+		// and divide it by the lever movement amplitude
+		if (_vm->_state->getViewType() == kCube) {
+			float pitch = _vm->_state->getLookAtPitch();
+			float heading = _vm->_state->getLookAtHeading();
+
+			float amplitude = sqrt(Math::square(maxPosX - minPosX) + Math::square(maxPosY - minPosY));
+			float distanceToMin = sqrt(Math::square(pitch - minPosX) + Math::square(heading - minPosY));
+			float distanceToMax = sqrt(Math::square(pitch - maxPosX) + Math::square(heading - maxPosY));
+
+			ratioPosition = distanceToMax < amplitude ? distanceToMin / amplitude : 0.0;
+		} else {
+			Common::Point mouse = _vm->_cursor->getPosition();
+			int16 amplitude;
+			int16 pixelPosition;
+
+			if (minPosX == maxPosX) {
+				// Vertical slider
+				amplitude = maxPosY - minPosY;
+				pixelPosition = mouse.y - minPosY - topOffset;
+			} else {
+				// Horizontal slider
+				amplitude = maxPosX - minPosX;
+				pixelPosition = mouse.x - minPosX;
+			}
+
+			ratioPosition = pixelPosition / (float) amplitude;
+		}
+
+		int16 position = ratioPosition * (numPositions + 1);
+		position = CLIP<int16>(position, 1, numPositions);
+
+		if (_vm->_state->getDragLeverLimited()) {
+			int16 minPosition = _vm->_state->getDragLeverLimitMin();
+			int16 maxPosition = _vm->_state->getDragLeverLimitMax();
+			position = CLIP(position, minPosition, maxPosition);
+		}
+
+		// Set new lever position
+		_vm->_state->setVar(var, position);
+
+		// Draw a frame
+		_vm->processInput(true);
+		_vm->drawFrame();
+
+		mousePressed = _vm->getEventManager()->getButtonState() & Common::EventManager::LBUTTON;
+		_vm->_state->setDragEnded(!mousePressed);
+
+		if (_vm->_state->getDragLeverSpeed()) {
+			warning("Interaction with var 58 is missing in opcode 127.");
+			return;
+		}
+
+		if (script) {
+			_vm->_state->setVar(var, position);
+			_vm->runScriptsFromNode(abs(script));
+		}
+
+		if (!mousePressed)
+			break;
+	}
+
+	_vm->_state->setDragLeverLimited(0);
+	_vm->_state->setDragLeverSpeed(0);
+}
+
+void Script::leverDragXY(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Drag 2D lever and update X (var %d) and Y (var %d) coordinates, while running script %d", cmd.op, cmd.args[0], cmd.args[1], cmd.args[4]);
+
+	uint16 varX = cmd.args[0];
+	uint16 varY = cmd.args[1];
+	uint16 scale = cmd.args[2];
+	uint16 maxLeverPosition = cmd.args[3];
+	uint16 script = _vm->_state->valueOrVarValue(cmd.args[4]);
+
+	Common::Point mouseInit = _vm->_cursor->getPosition();
+
+	_vm->_cursor->changeCursor(2);
+
+	bool mousePressed = true;
+	do {
+		Common::Point mouse = _vm->_cursor->getPosition();
+		int16 distanceX = (mouseInit.x - mouse.x) / scale;
+		int16 distanceY = (mouseInit.y - mouse.y) / scale;
+
+		distanceX = CLIP<int16>(distanceX, -maxLeverPosition, maxLeverPosition);
+		distanceY = CLIP<int16>(distanceY, -maxLeverPosition, maxLeverPosition);
+
+		// Set lever position variables
+		_vm->_state->setVar(varX, distanceX);
+		_vm->_state->setVar(varY, distanceY);
+
+		// Draw a frame
+		_vm->processInput(true);
+		_vm->drawFrame();
+
+		mousePressed = _vm->getEventManager()->getButtonState() & Common::EventManager::LBUTTON;
+		_vm->_state->setDragEnded(!mousePressed);
+
+		// Run script
+		if (script)
+			_vm->runScriptsFromNode(script);
+	} while (mousePressed);
+}
+
+void Script::runScriptWhileDragging(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: While dragging lever, run script %d", cmd.op, cmd.args[7]);
+
+	uint16 script = _vm->_state->valueOrVarValue(cmd.args[7]);
+	uint16 maxDistance = cmd.args[6];
+	uint16 maxLeverPosition = cmd.args[5];
+	int16 lastLeverPosition = _vm->_state->getVar(cmd.args[4]);
+	int16 leverHeight = cmd.args[3];
+	int16 leverWidth = cmd.args[2];
+	int16 topOffset = _vm->_state->getViewType() != kMenu ? 30 : 0;
+
+	_vm->_cursor->changeCursor(2);
+
+	bool mousePressed = true;
+	do {
+		mousePressed = _vm->getEventManager()->getButtonState() & Common::EventManager::LBUTTON;
+		_vm->_state->setDragEnded(!mousePressed);
+
+		_vm->processInput(true);
+		_vm->drawFrame();
+
+		// Distance between the mouse and the lever
+		Common::Point mouse = _vm->_cursor->getPosition();
+		int16 distanceX = mouse.x - leverWidth / 2 - _vm->_state->getVar(cmd.args[0]);
+		int16 distanceY = mouse.y - leverHeight / 2 - _vm->_state->getVar(cmd.args[1]) - topOffset;
+		float distance = sqrt((float) distanceX * distanceX + distanceY * distanceY);
+
+		uint16 bestPosition = lastLeverPosition;
+		if (distance > maxDistance) {
+			_vm->_state->setDragLeverPositionChanged(false);
+		} else {
+			// Find the lever position where the distance between the lever
+			// and the mouse is minimal, by trying every possible position.
+			float minDistance = 1000;
+			for (uint i = 0; i < maxLeverPosition; i++) {
+				_vm->_state->setDragPositionFound(false);
+
+				_vm->_state->setVar(cmd.args[4], i);
+				_vm->runScriptsFromNode(script);
+
+				mouse = _vm->_cursor->getPosition();
+				distanceX = mouse.x - leverWidth / 2 - _vm->_state->getVar(cmd.args[0]);
+				distanceY = mouse.y - leverHeight / 2 - _vm->_state->getVar(cmd.args[1]) - topOffset;
+				distance = sqrt((float) distanceX * distanceX + distanceY * distanceY);
+
+				if (distance < minDistance) {
+					minDistance = distance;
+					bestPosition = i;
+				}
+			}
+			_vm->_state->setDragLeverPositionChanged(bestPosition != lastLeverPosition);
+		}
+
+		// Set the lever position to the best position
+		_vm->_state->setDragPositionFound(true);
+		_vm->_state->setVar(cmd.args[4], bestPosition);
+
+		_vm->runScriptsFromNode(script);
+		_vm->processInput(true);
+		_vm->drawFrame();
+	} while (mousePressed);
+}
+
 void Script::chooseNextNode(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: Choose next node using condition %d", cmd.op, cmd.args[0]);
 
@@ -1561,6 +1816,44 @@ void Script::moviePlaySynchronized(Context &c, const Opcode &cmd) {
 
 	_vm->_state->setMovieSynchronized(1);
 	_vm->playSimpleMovie(_vm->_state->valueOrVarValue(cmd.args[0]));
+}
+
+void Script::cameraLimitMovement(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Limit camera movement in a rect", cmd.op);
+
+	_vm->_state->limitCubeCamera(cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3]);
+}
+
+void Script::cameraFreeMovement(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Free camera movement from rect", cmd.op);
+
+	_vm->_state->freeCubeCamera();
+}
+
+void Script::cameraLookAt(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Camera look at %d %d", cmd.op, cmd.args[0], cmd.args[1]);
+
+	float pitch = cmd.args[0];
+	float heading = cmd.args[1];
+	_vm->_state->lookAt(pitch, heading);
+}
+
+void Script::cameraLookAtVar(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Camera look at value of var %d", cmd.op, cmd.args[0]);
+
+	float pitch = _vm->_state->getVar(cmd.args[0]) / 1000.0;
+	float heading = _vm->_state->getVar(cmd.args[0] + 1) / 1000.0;
+	_vm->_state->lookAt(pitch, heading);
+}
+
+void Script::cameraGetLookAt(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Save camera look at to var %d", cmd.op, cmd.args[0]);
+
+	float pitch = _vm->_state->getLookAtPitch() * 1000.0;
+	float heading = _vm->_state->getLookAtHeading() * 1000.0;
+
+	_vm->_state->setVar(cmd.args[0], pitch);
+	_vm->_state->setVar(cmd.args[0] + 1, heading);
 }
 
 void Script::changeNode(Context &c, const Opcode &cmd) {
@@ -1688,7 +1981,7 @@ void Script::runScriptForVarDrawFramesHelper(uint16 var, int32 startValue, int32
 
 		while (1) {
 			if ((positiveDirection && (currentValue >= endValue))
-					|| (!positiveDirection && (currentValue <= startValue)))
+					|| (!positiveDirection && (currentValue <= endValue)))
 				break;
 
 			_vm->_state->setVar(var, currentValue);
@@ -1717,7 +2010,7 @@ void Script::runScriptForVarEachXFrames(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: For var %d from %d to %d, run script %d every %d frames",
 			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3], cmd.args[4]);
 
-	runScriptForVarDrawFramesHelper(cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3], (int16) cmd.args[4]);
+	runScriptForVarDrawFramesHelper(cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3], cmd.args[4]);
 }
 
 void Script::runScriptForVarStartVar(Context &c, const Opcode &cmd) {
@@ -1731,7 +2024,7 @@ void Script::runScriptForVarStartVarEachXFrames(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: For var %d from var %d value to %d, run script %d every %d frames",
 			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3], cmd.args[4]);
 
-	runScriptForVarDrawFramesHelper(cmd.args[0], _vm->_state->getVar(cmd.args[1]), cmd.args[2], cmd.args[3], (int16) cmd.args[4]);
+	runScriptForVarDrawFramesHelper(cmd.args[0], _vm->_state->getVar(cmd.args[1]), cmd.args[2], cmd.args[3], cmd.args[4]);
 }
 
 void Script::runScriptForVarEndVar(Context &c, const Opcode &cmd) {
@@ -1745,7 +2038,7 @@ void Script::runScriptForVarEndVarEachXFrames(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: For var %d from var %d value to var %d value, run script %d every %d frames",
 			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3], cmd.args[4]);
 
-	runScriptForVarDrawFramesHelper(cmd.args[0], cmd.args[1], _vm->_state->getVar(cmd.args[2]), cmd.args[3], (int16) cmd.args[4]);
+	runScriptForVarDrawFramesHelper(cmd.args[0], cmd.args[1], _vm->_state->getVar(cmd.args[2]), cmd.args[3], cmd.args[4]);
 }
 
 void Script::runScriptForVarStartEndVar(Context &c, const Opcode &cmd) {
@@ -1759,14 +2052,14 @@ void Script::runScriptForVarStartEndVarEachXFrames(Context &c, const Opcode &cmd
 	debugC(kDebugScript, "Opcode %d: For var %d from var %d value to var %d value, run script %d every %d frames",
 			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3], cmd.args[4]);
 
-	runScriptForVarDrawFramesHelper(cmd.args[0], _vm->_state->getVar(cmd.args[1]), _vm->_state->getVar(cmd.args[2]), cmd.args[3], (int16) cmd.args[4]);
+	runScriptForVarDrawFramesHelper(cmd.args[0], _vm->_state->getVar(cmd.args[1]), _vm->_state->getVar(cmd.args[2]), cmd.args[3], cmd.args[4]);
 }
 
 void Script::drawFramesForVar(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: For var %d from %d to %d, every %d frames",
 			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3]);
 
-	runScriptForVarDrawFramesHelper(cmd.args[0], cmd.args[1], cmd.args[2], 0, -((int16) cmd.args[3]));
+	runScriptForVarDrawFramesHelper(cmd.args[0], cmd.args[1], cmd.args[2], 0, -cmd.args[3]);
 }
 
 void Script::drawFramesForVarEachTwoFrames(Context &c, const Opcode &cmd) {
@@ -1823,6 +2116,38 @@ void Script::runPuzzle4(Context &c, const Opcode &cmd) {
 	debugC(kDebugScript, "Opcode %d: Run puzzle helper %d", cmd.op, cmd.args[0]);
 
 	_puzzles->run(cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3]);
+}
+
+void Script::soundPlay(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Play sound %d", cmd.op, cmd.args[0]);
+
+	_vm->_sound->play(cmd.args[0], 100);
+}
+
+void Script::soundPlayVolume(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Play sound %d at volume %d", cmd.op, cmd.args[0], cmd.args[1]);
+
+	int32 volume = _vm->_state->valueOrVarValue(cmd.args[1]);
+	_vm->_sound->play(cmd.args[0], volume);
+}
+
+void Script::soundPlayVolumeDirection(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Play sound %d at volume %d in direction %d",
+			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2]);
+
+	int32 volume = _vm->_state->valueOrVarValue(cmd.args[1]);
+	int32 heading = _vm->_state->valueOrVarValue(cmd.args[2]);
+	_vm->_sound->play(cmd.args[0], volume, heading, 85);
+}
+
+void Script::soundPlayVolumeDirectionAtt(Context &c, const Opcode &cmd) {
+	debugC(kDebugScript, "Opcode %d: Play sound %d at volume %d in direction %d with attenuation %d",
+			cmd.op, cmd.args[0], cmd.args[1], cmd.args[2], cmd.args[3]);
+
+	int32 volume = _vm->_state->valueOrVarValue(cmd.args[1]);
+	int32 heading = _vm->_state->valueOrVarValue(cmd.args[2]);
+	int32 att = _vm->_state->valueOrVarValue(cmd.args[3]);
+	_vm->_sound->play(cmd.args[0], volume, heading, att);
 }
 
 void Script::drawOneFrame(Context &c, const Opcode &cmd) {

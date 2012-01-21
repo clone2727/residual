@@ -119,6 +119,8 @@ private:
 	DECLARE_OPCODE(movieInitFrameVarPreload);
 	DECLARE_OPCODE(movieInitOverrridePosition);
 	DECLARE_OPCODE(movieInitScriptedPosition);
+	DECLARE_OPCODE(movieRemove);
+	DECLARE_OPCODE(movieRemoveAll);
 	DECLARE_OPCODE(movieSetLooping);
 	DECLARE_OPCODE(movieSetNotLooping);
 	DECLARE_OPCODE(sunspotAdd);
@@ -150,6 +152,8 @@ private:
 	DECLARE_OPCODE(varRandRange);
 	DECLARE_OPCODE(polarToRectSimple);
 	DECLARE_OPCODE(polarToRect);
+	DECLARE_OPCODE(varSetDistanceToZone);
+	DECLARE_OPCODE(varSetMinDistanceToZone);
 	DECLARE_OPCODE(varRemoveBits);
 	DECLARE_OPCODE(varToggleBits);
 	DECLARE_OPCODE(varCopy);
@@ -179,6 +183,7 @@ private:
 	DECLARE_OPCODE(varMultVarValue);
 	DECLARE_OPCODE(varDivValue);
 	DECLARE_OPCODE(varDivVarValue);
+	DECLARE_OPCODE(varCrossMultiplication);
 	DECLARE_OPCODE(varMinValue);
 	DECLARE_OPCODE(varClipValue);
 	DECLARE_OPCODE(varClipChangeBound);
@@ -209,6 +214,9 @@ private:
 	DECLARE_OPCODE(ifPitchInRange);
 	DECLARE_OPCODE(ifHeadingPitchInRect);
 	DECLARE_OPCODE(ifMouseIsInRect);
+	DECLARE_OPCODE(leverDrag);
+	DECLARE_OPCODE(leverDragXY);
+	DECLARE_OPCODE(runScriptWhileDragging);
 	DECLARE_OPCODE(chooseNextNode);
 	DECLARE_OPCODE(goToNodeTransition);
 	DECLARE_OPCODE(goToNodeTrans2);
@@ -218,6 +226,11 @@ private:
 	DECLARE_OPCODE(zipToRoomNode);
 	DECLARE_OPCODE(moviePlay);
 	DECLARE_OPCODE(moviePlaySynchronized);
+	DECLARE_OPCODE(cameraLimitMovement);
+	DECLARE_OPCODE(cameraFreeMovement);
+	DECLARE_OPCODE(cameraLookAt);
+	DECLARE_OPCODE(cameraLookAtVar);
+	DECLARE_OPCODE(cameraGetLookAt);
 	DECLARE_OPCODE(changeNode);
 	DECLARE_OPCODE(changeNodeRoom);
 	DECLARE_OPCODE(changeNodeRoomAge);
@@ -242,6 +255,10 @@ private:
 	DECLARE_OPCODE(runPuzzle2);
 	DECLARE_OPCODE(runPuzzle3);
 	DECLARE_OPCODE(runPuzzle4);
+	DECLARE_OPCODE(soundPlay);
+	DECLARE_OPCODE(soundPlayVolume);
+	DECLARE_OPCODE(soundPlayVolumeDirection);
+	DECLARE_OPCODE(soundPlayVolumeDirectionAtt);
 	DECLARE_OPCODE(drawOneFrame);
 	DECLARE_OPCODE(newGame);
 

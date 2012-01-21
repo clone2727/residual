@@ -59,6 +59,16 @@ public:
 	const Common::String describeVar(uint16 var);
 	const Common::String describeCondition(int16 condition);
 
+	DECLARE_VAR(47, ProjectorAngleX)
+	DECLARE_VAR(48, ProjectorAngleY)
+	DECLARE_VAR(49, ProjectorAngleZoom)
+	DECLARE_VAR(50, ProjectorAngleBlur)
+
+	DECLARE_VAR(57, DragEnded)
+	DECLARE_VAR(58, DragLeverSpeed)
+	DECLARE_VAR(59, DragPositionFound)
+	DECLARE_VAR(60, DragLeverPositionChanged)
+
 	DECLARE_VAR(61, LocationAge)
 	DECLARE_VAR(62, LocationRoom)
 	DECLARE_VAR(63, LocationNode)
@@ -69,9 +79,16 @@ public:
 	DECLARE_VAR(68, MenuSavedRoom)
 	DECLARE_VAR(69, MenuSavedNode)
 
+	DECLARE_VAR(71, FrameCountdown)
+
 	DECLARE_VAR(115, SunspotIntensity)
 	DECLARE_VAR(116, SunspotColor)
 	DECLARE_VAR(117, SunspotRadius)
+
+	DECLARE_VAR(136, CameraPitch)
+	DECLARE_VAR(137, CameraHeading)
+	DECLARE_VAR(140, CameraMinPitch)
+	DECLARE_VAR(141, CameraMaxPitch)
 
 	DECLARE_VAR(142, MovieStartFrame)
 	DECLARE_VAR(143, MovieEndFrame)
@@ -82,6 +99,7 @@ public:
 	DECLARE_VAR(153, MovieNextFrameGetVar)
 	DECLARE_VAR(154, MovieStartFrameVar)
 	DECLARE_VAR(155, MovieEndFrameVar)
+	DECLARE_VAR(156, MovieForce2d)
 	DECLARE_VAR(160, MovieSynchronized)
 	DECLARE_VAR(163, MovieOverrideCondition)
 	DECLARE_VAR(164, MovieUVar)
@@ -91,9 +109,20 @@ public:
 	DECLARE_VAR(168, MovieOverridePosV)
 	DECLARE_VAR(173, MoviePlayingVar)
 
+	DECLARE_VAR(178, MovieUseBackground)
+
 	DECLARE_VAR(189, LocationNextNode)
 	DECLARE_VAR(190, LocationNextRoom)
 	DECLARE_VAR(191, LocationNextAge)
+
+	DECLARE_VAR(243, ProjectorX)
+	DECLARE_VAR(244, ProjectorY)
+	DECLARE_VAR(245, ProjectorZoom)
+	DECLARE_VAR(246, ProjectorBlur)
+	DECLARE_VAR(247, ProjectorAngleXOffset)
+	DECLARE_VAR(248, ProjectorAngleYOffset)
+	DECLARE_VAR(249, ProjectorAngleZoomOffset)
+	DECLARE_VAR(250, ProjectorAngleBlurOffset)
 
 	DECLARE_VAR(277, JournalAtrusState)
 	DECLARE_VAR(279, JournalSaavedroState)
@@ -117,8 +146,12 @@ public:
 	DECLARE_VAR(1352, MenuSaveLoadSelectedItem)
 	DECLARE_VAR(1353, MenuSaveLoadCurrentPage)
 
+	DECLARE_VAR(1399, DragLeverLimited)
+	DECLARE_VAR(1400, DragLeverLimitMin)
+	DECLARE_VAR(1401, DragLeverLimitMax)
+
+	void updateFrameCounters();
 	uint getFrameCount() { return _data.currentFrame; }
-	void incFrameCount() { _data.currentFrame++; }
 
 	ViewType getViewType() { return static_cast<ViewType>(_data.currentNodeType); }
 	void setViewType(ViewType t) { _data.currentNodeType = t; }
@@ -126,6 +159,14 @@ public:
 	float getLookAtPitch() { return _data.lookatPitch; }
 	float getLookAtHeading() { return _data.lookatHeading; }
 	void lookAt(float pitch, float heading) { _data.lookatPitch = pitch; _data.lookatHeading = heading; }
+
+	void limitCubeCamera(float minPitch, float maxPitch, float minHeading, float maxHeading);
+	void freeCubeCamera() { _data.limitCubeCamera = false; }
+	bool isCameraLimited() { return _data.limitCubeCamera != 0; }
+	float getMinPitch() { return _data.minPitch; }
+	float getMaxPitch() { return _data.maxPitch; }
+	float getMinHeading() { return _data.minHeading; }
+	float getMaxHeading() { return _data.maxHeading; }
 
 	Common::Array<uint16> getInventory();
 	void updateInventory(const Common::Array<uint16> &items);

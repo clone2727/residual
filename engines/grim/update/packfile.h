@@ -8,47 +8,53 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
-
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
-
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  *
  */
 
-#include "engines/grim/colormap.h"
-#include "engines/grim/resource.h"
+#ifndef PACKFILE_H
+#define PACKFILE_H
+
+namespace Common {
+class SeekableReadStream;
+}
 
 namespace Grim {
 
-// Load a colormap from the given data.
-CMap::CMap(const Common::String &fileName, Common::SeekableReadStream *data) :
-	Object(), _fname(fileName) {
-	uint32 tag = data->readUint32BE();
-	if (tag != MKTAG('C','M','P',' '))
-		error("Invalid magic loading colormap");
+class PackFile : public Common::SeekableReadStream {
+public:
+	PackFile(Common::SeekableReadStream *data);
+	~PackFile();
 
-	data->seek(64, SEEK_SET);
-	data->read(_colors, sizeof(_colors));
-}
+	bool err() const;
+	void clearErr();
+	uint32 read(void *dataPtr, uint32 dataSize);
+	bool eos() const;
+	int32 pos() const;
+	int32 size() const;
+	bool seek(int32 offset, int whence = SEEK_SET);
 
-CMap::~CMap() {
-	if (g_resourceloader)
-		g_resourceloader->uncacheColormap(this);
-}
+private:
+	Common::SeekableReadStream *_orgStream;
+	int32 _offset, _size;
 
-bool CMap::operator==(const CMap &c) const {
-	if (_fname != c._fname) {
-		return false;
-	}
+	uint16 *_codeTable;
+	const uint32 _kCodeTableSize;
 
-	return true;
-}
+	void createCodeTable(uint32 key);
+	void decode(uint8 *data, uint32 size, uint32 start_point);
 
+	static const uint32 _knownOffsets[5];
+};
 
 } // end of namespace Grim
 
+#endif

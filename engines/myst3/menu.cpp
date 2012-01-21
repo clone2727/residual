@@ -25,6 +25,7 @@
 #include "engines/myst3/inventory.h"
 #include "engines/myst3/menu.h"
 #include "engines/myst3/myst3.h"
+#include "engines/myst3/sound.h"
 #include "engines/myst3/state.h"
 
 #include "common/events.h"
@@ -178,6 +179,8 @@ Dialog::Dialog(Myst3Engine *vm, uint id):
 
 	const Graphics::Surface *frame = _bink.decodeNextFrame();
 	_texture = _vm->_gfx->createTexture(frame);
+
+	_vm->_sound->play(699, 10);
 }
 
 Dialog::~Dialog() {
@@ -208,7 +211,7 @@ Common::Rect Dialog::getPosition() {
 int16 Dialog::update() {
 	// Process events
 	Common::Event event;
-	while (_vm->_system->getEventManager()->pollEvent(event)) {
+	while (_vm->getEventManager()->pollEvent(event)) {
 		// Check for "Hard" quit"
 		if (event.type == Common::EVENT_QUIT) {
 			_vm->setShouldQuit();
@@ -504,9 +507,9 @@ void Menu::handleInput(const Common::KeyState &e) {
 		return;
 	}
 
-	if ((e.ascii >= 'a' && e.ascii <= 'z'
-			|| e.ascii >= 'A' && e.ascii <= 'Z'
-			|| e.ascii >= '0' && e.ascii <= '9'
+	if (((e.ascii >= 'a' && e.ascii <= 'z')
+			|| (e.ascii >= 'A' && e.ascii <= 'Z')
+			|| (e.ascii >= '0' && e.ascii <= '9')
 			|| e.ascii == ' ')
 			&& (display.size() < 17)) {
 		display += e.ascii;

@@ -24,6 +24,8 @@
 #include "engines/myst3/myst3.h"
 #include "engines/myst3/state.h"
 
+#include "graphics/colormasks.h"
+
 namespace Myst3 {
 
 Movie::Movie(Myst3Engine *vm, uint16 id) :
@@ -33,7 +35,8 @@ Movie::Movie(Myst3Engine *vm, uint16 id) :
 	_posV(0),
 	_startFrame(0),
 	_endFrame(0),
-	_texture(0) {
+	_texture(0),
+	_force2d(false) {
 
 	const DirectorySubEntry *binkDesc = _vm->getFileDescription(0, id, 0, DirectorySubEntry::kMovie);
 
@@ -89,19 +92,35 @@ void Movie::loadPosition(const VideoData &videoData) {
 	_posV = videoData.v;
 }
 
+void Movie::draw2d() {
+	Common::Rect screenRect = Common::Rect(_bink.getWidth(), _bink.getHeight());
+	screenRect.translate(_posU, _posV);
+
+	if (_vm->_state->getViewType() != kMenu)
+		screenRect.translate(0, Scene::kTopBorderHeight);
+
+	Common::Rect textureRect = Common::Rect(_bink.getWidth(), _bink.getHeight());
+	_vm->_gfx->drawTexturedRect2D(screenRect, textureRect, _texture, 0.99f);
+}
+
+void Movie::draw3d() {
+	_vm->_gfx->drawTexturedRect3D(_pTopLeft, _pBottomLeft, _pTopRight, _pBottomRight, _texture);
+}
+
 void Movie::draw() {
-	if (_vm->_state->getViewType() == kCube) {
-		_vm->_gfx->drawTexturedRect3D(_pTopLeft, _pBottomLeft, _pTopRight, _pBottomRight, _texture);
+	if (_force2d)
+		return;
+
+	if (_vm->_state->getViewType() != kCube) {
+		draw2d();
 	} else {
-		Common::Rect screenRect = Common::Rect(_bink.getWidth(), _bink.getHeight());
-		screenRect.translate(_posU, _posV);
-
-		if (_vm->_state->getViewType() == kFrame)
-			screenRect.translate(0, Scene::kTopBorderHeight);
-
-		Common::Rect textureRect = Common::Rect(_bink.getWidth(), _bink.getHeight());
-		_vm->_gfx->drawTexturedRect2D(screenRect, textureRect, _texture, 0.99f);
+		draw3d();
 	}
+}
+
+void Movie::drawForce2d() {
+	if (_force2d)
+		draw2d();
 }
 
 void Movie::drawNextFrameToTexture() {
@@ -195,7 +214,7 @@ void ScriptedMovie::update() {
 		if (_nextFrameReadVar) {
 			int32 nextFrame = _vm->_state->getVar(_nextFrameReadVar);
 			if (nextFrame > 0) {
-				if (_bink.getCurFrame() != nextFrame) {
+				if (_bink.getCurFrame() != nextFrame - 1) {
 					_bink.seekToFrame(nextFrame - 1);
 					drawNextFrameToTexture();
 				}
@@ -275,6 +294,101 @@ bool SimpleMovie::update() {
 }
 
 SimpleMovie::~SimpleMovie() {
+}
+
+ProjectorMovie::ProjectorMovie(Myst3Engine *vm, uint16 id, Graphics::Surface *background) :
+	ScriptedMovie(vm, id),
+	_background(background),
+	_frame(0) {
+	_enabled = true;
+
+	for (uint i = 0; i < kBlurIterations; i++) {
+		_blurTableX[i] = sin(2 * M_PI * i / (float) kBlurIterations) * 256.0;
+		_blurTableY[i] = cos(2 * M_PI * i / (float) kBlurIterations) * 256.0;
+	}
+}
+
+ProjectorMovie::~ProjectorMovie() {
+	if (_frame) {
+		_frame->free();
+		delete _frame;
+	}
+
+	if (_background) {
+		_background->free();
+		delete _background;
+	}
+}
+
+void ProjectorMovie::update() {
+	if (!_frame) {
+		// First call, get the alpha channel from the bink file
+		const Graphics::Surface *frame = _bink.decodeNextFrame();
+		_frame = new Graphics::Surface();
+		_frame->copyFrom(*frame);
+	}
+
+	uint16 focus = _vm->_state->getProjectorBlur() / 10;
+	uint16 zoom = _vm->_state->getProjectorZoom();
+	uint16 backgroundX = (_vm->_state->getProjectorX() - zoom / 2) / 10;
+	uint16 backgroundY = (_vm->_state->getProjectorY() - zoom / 2) / 10;
+	float delta = zoom / 10.0 / _frame->w;
+
+	// For each pixel in the target image
+	for (uint i = 0; i < _frame->h; i++) {
+		uint32 *dst = (uint32 *)_frame->getBasePtr(0, i);
+		for (uint j = 0; j < _frame->w; j++) {
+			uint8 a, depth;
+			uint16 r = 0, g = 0, b = 0;
+			uint32 srcX = backgroundX + j * delta;
+			uint32 srcY = backgroundY + i * delta;
+			uint32 *src = (uint32 *)_background->getBasePtr(srcX, srcY);
+
+			// Keep the alpha channel from the previous frame
+			a = *dst >> 24;
+
+			// Get the depth from the background
+			depth = *src >> 24;
+
+			// Compute the blur level from the focus point and the depth of the current point
+			uint8 blurLevel = abs(focus - depth) + 1;
+			
+			// No need to compute the effect for transparent pixels
+			if (a != 0) {
+				// The blur effect is done by mixing the color components from the pixel at (srcX, srcY)
+				// and other pixels on the same row / column
+				uint cnt = 0;
+				for (uint k = 0; k < kBlurIterations; k++) {
+					uint8 blurR, blurG, blurB;
+					uint32 blurX = srcX + ((uint32) (blurLevel * _blurTableX[k] * delta) >> 12); // >> 12 = / 256 / 16
+					uint32 blurY = srcY + ((uint32) (blurLevel * _blurTableY[k] * delta) >> 12);
+
+					if (blurX < 1024 && blurY < 1024) {
+						uint32 *blur = (uint32 *)_background->getBasePtr(blurX, blurY);
+
+						Graphics::colorToRGB< Graphics::ColorMasks<8888> >(*blur, blurR, blurG, blurB);
+						r += blurR;
+						g += blurG;
+						b += blurB;
+						cnt++;
+					}
+				}
+
+				// Divide the components by the number of pixels used in the blur effect
+				r /= cnt;
+				g /= cnt;
+				b /= cnt;
+			}
+
+			// Draw the new frame
+			*dst++ = Graphics::ARGBToColor< Graphics::ColorMasks<8888> >(a, r, g, b);
+		}
+	}
+
+	if (_texture)
+		_texture->update(_frame);
+	else
+		_texture = _vm->_gfx->createTexture(_frame);
 }
 
 } /* namespace Myst3 */
