@@ -47,6 +47,7 @@ private:
 		bool result;
 		const Common::Array<Opcode> *script;
 		Common::Array<Opcode>::const_iterator op;
+		Common::Array<Opcode>::const_iterator whileStart;
 	};
 
 	typedef void (Script::*CommandProc)(Context &c, const Opcode &cmd);
@@ -143,7 +144,7 @@ private:
 	DECLARE_OPCODE(varSetOneHundred);
 	DECLARE_OPCODE(varSetValue);
 	DECLARE_OPCODE(varToggle);
-	DECLARE_OPCODE(varSetOneIfZero);
+	DECLARE_OPCODE(varSetOneIfNotZero);
 	DECLARE_OPCODE(varOpposite);
 	DECLARE_OPCODE(varAbsolute);
 	DECLARE_OPCODE(varDereference);
@@ -215,7 +216,9 @@ private:
 	DECLARE_OPCODE(ifHeadingPitchInRect);
 	DECLARE_OPCODE(ifMouseIsInRect);
 	DECLARE_OPCODE(leverDrag);
+	DECLARE_OPCODE(leverDragPositions);
 	DECLARE_OPCODE(leverDragXY);
+	DECLARE_OPCODE(itemDrag);
 	DECLARE_OPCODE(runScriptWhileDragging);
 	DECLARE_OPCODE(chooseNextNode);
 	DECLARE_OPCODE(goToNodeTransition);
@@ -224,18 +227,32 @@ private:
 	DECLARE_OPCODE(goToRoomNode);
 	DECLARE_OPCODE(zipToNode);
 	DECLARE_OPCODE(zipToRoomNode);
+	DECLARE_OPCODE(reloadNode);
+	DECLARE_OPCODE(redrawFrame);
 	DECLARE_OPCODE(moviePlay);
 	DECLARE_OPCODE(moviePlaySynchronized);
+	DECLARE_OPCODE(moviePlayFullFrame);
+	DECLARE_OPCODE(moviePlayFullFrameTrans);
+	DECLARE_OPCODE(moviePlayChangeNode);
+	DECLARE_OPCODE(moviePlayChangeNodeTrans);
+	DECLARE_OPCODE(lootAt);
+	DECLARE_OPCODE(lootAtInXFrames);
+	DECLARE_OPCODE(lootAtMovieStart);
+	DECLARE_OPCODE(lootAtMovieStartInXFrames);
 	DECLARE_OPCODE(cameraLimitMovement);
 	DECLARE_OPCODE(cameraFreeMovement);
 	DECLARE_OPCODE(cameraLookAt);
 	DECLARE_OPCODE(cameraLookAtVar);
 	DECLARE_OPCODE(cameraGetLookAt);
+	DECLARE_OPCODE(lootAtMovieStartImmediate);
+	DECLARE_OPCODE(cameraSetFOV);
 	DECLARE_OPCODE(changeNode);
 	DECLARE_OPCODE(changeNodeRoom);
 	DECLARE_OPCODE(changeNodeRoomAge);
 	DECLARE_OPCODE(drawXFrames);
 	DECLARE_OPCODE(drawWhileCond);
+	DECLARE_OPCODE(whileStart);
+	DECLARE_OPCODE(whileEnd);
 	DECLARE_OPCODE(runScriptWhileCond);
 	DECLARE_OPCODE(runScriptWhileCondEachXFrames);
 	DECLARE_OPCODE(runScriptForVar);
@@ -250,7 +267,9 @@ private:
 	DECLARE_OPCODE(drawFramesForVarEachTwoFrames);
 	DECLARE_OPCODE(drawFramesForVarStartEndVarEachTwoFrames);
 	DECLARE_OPCODE(runScript);
+	DECLARE_OPCODE(runScriptWithVar);
 	DECLARE_OPCODE(runCommonScript);
+	DECLARE_OPCODE(runCommonScriptWithVar);
 	DECLARE_OPCODE(runPuzzle1);
 	DECLARE_OPCODE(runPuzzle2);
 	DECLARE_OPCODE(runPuzzle3);
@@ -259,7 +278,16 @@ private:
 	DECLARE_OPCODE(soundPlayVolume);
 	DECLARE_OPCODE(soundPlayVolumeDirection);
 	DECLARE_OPCODE(soundPlayVolumeDirectionAtt);
+	DECLARE_OPCODE(runSoundScriptNode);
+	DECLARE_OPCODE(runSoundScriptNodeRoom);
+	DECLARE_OPCODE(runSoundScriptNodeRoomAge);
 	DECLARE_OPCODE(drawOneFrame);
+	DECLARE_OPCODE(cursorHide);
+	DECLARE_OPCODE(cursorShow);
+	DECLARE_OPCODE(cursorSet);
+	DECLARE_OPCODE(cursorLock);
+	DECLARE_OPCODE(cursorUnlock);
+	DECLARE_OPCODE(dialogOpen);
 	DECLARE_OPCODE(newGame);
 
 	// PS2 specific opcodes

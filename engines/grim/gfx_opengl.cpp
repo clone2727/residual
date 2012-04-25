@@ -30,6 +30,7 @@
 #include "common/system.h"
 
 #include "graphics/surface.h"
+#include "graphics/pixelbuffer.h"
 
 #include "engines/grim/actor.h"
 #include "engines/grim/colormap.h"
@@ -37,12 +38,11 @@
 #include "engines/grim/material.h"
 #include "engines/grim/gfx_opengl.h"
 #include "engines/grim/grim.h"
-#include "engines/grim/lipsync.h"
 #include "engines/grim/bitmap.h"
 #include "engines/grim/primitives.h"
-#include "engines/grim/modelemi.h"
 #include "engines/grim/model.h"
 #include "engines/grim/set.h"
+#include "engines/grim/emi/modelemi.h"
 
 #ifdef USE_OPENGL
 
@@ -56,6 +56,7 @@ PFNGLGENPROGRAMSARBPROC glGenProgramsARB;
 PFNGLBINDPROGRAMARBPROC glBindProgramARB;
 PFNGLPROGRAMSTRINGARBPROC glProgramStringARB;
 PFNGLDELETEPROGRAMSARBPROC glDeleteProgramsARB;
+PFNGLPROGRAMLOCALPARAMETER4FARBPROC glProgramLocalParameter4fARB;
 
 #endif
 
@@ -73,31 +74,56 @@ static char fragSrc[] =
 	MOV result.depth, d.r;\n\
 	END\n";
 
+static char dimFragSrc[] =
+	"!!ARBfp1.0\n\
+	PARAM level = program.local[0];\n\
+	TEMP color;\n\
+	TEMP d;\n\
+	TEX d, fragment.texcoord[0], texture[0], 2D;\n\
+	TEMP sum;\n\
+	MOV sum, d.r;\n\
+	ADD sum, sum, d.g;\n\
+	ADD sum, sum, d.b;\n\
+	MUL sum, sum, 0.33;\n\
+	MUL sum, sum, level.x;\n\
+	MOV result.color.r, sum;\n\
+	MOV result.color.g, sum;\n\
+	MOV result.color.b, sum;\n\
+	END\n";
+
 GfxOpenGL::GfxOpenGL() {
 	g_driver = this;
 	_storedDisplay = NULL;
 	_emergFont = 0;
+	_alpha = 1.f;
 }
 
 GfxOpenGL::~GfxOpenGL() {
 	delete[] _storedDisplay;
+
 	if (_emergFont && glIsList(_emergFont))
 		glDeleteLists(_emergFont, 128);
 
 #ifdef GL_ARB_fragment_program
 	if (_useDepthShader)
 		glDeleteProgramsARB(1, &_fragmentProgram);
+
+	if (_useDimShader)
+		glDeleteProgramsARB(1, &_dimFragProgram);
 #endif
 }
 
 byte *GfxOpenGL::setupScreen(int screenW, int screenH, bool fullscreen) {
-	g_system->setupScreen(screenW, screenH, fullscreen, true);
+	_pixelFormat = g_system->setupScreen(screenW, screenH, fullscreen, true).getFormat();
 
 	_screenWidth = screenW;
 	_screenHeight = screenH;
-	_screenBPP = 24;
+	_scaleW = _screenWidth / (float)_gameWidth;
+	_scaleH = _screenHeight / (float)_gameHeight;
+
 	_isFullscreen = g_system->getFeatureState(OSystem::kFeatureFullscreenMode);
 	_useDepthShader = false;
+	_useDimShader = false;
 
 	g_system->showMouse(!fullscreen);
 
@@ -108,8 +134,9 @@ byte *GfxOpenGL::setupScreen(int screenW, int screenH, bool fullscreen) {
 	// Load emergency built-in font
 	loadEmergFont();
 
-	_storedDisplay = new byte[_screenWidth * _screenHeight * 4];
-	memset(_storedDisplay, 0, _screenWidth * _screenHeight * 4);
+	_screenSize = _screenWidth * _screenHeight * 4;
+	_storedDisplay = new byte[_screenSize];
+	memset(_storedDisplay, 0, _screenSize);
 	_smushNumTex = 0;
 
 	_currentShadowArray = NULL;
@@ -120,6 +147,7 @@ byte *GfxOpenGL::setupScreen(int screenW, int screenH, bool fullscreen) {
 	glPolygonOffset(-6.0, -6.0);
 
 	initExtensions();
+	glGetIntegerv(GL_MAX_LIGHTS, &_maxLights);
 
 	return NULL;
 }
@@ -142,10 +170,13 @@ void GfxOpenGL::initExtensions()
 	glProgramStringARB = (PFNGLPROGRAMSTRINGARBPROC)u.func_ptr;
 	u.obj_ptr = SDL_GL_GetProcAddress("glDeleteProgramsARB");
 	glDeleteProgramsARB = (PFNGLDELETEPROGRAMSARBPROC)u.func_ptr;
+	u.obj_ptr = SDL_GL_GetProcAddress("glProgramLocalParameter4fARB");
+	glProgramLocalParameter4fARB = (PFNGLPROGRAMLOCALPARAMETER4FARBPROC)u.func_ptr;
 
 	const char* extensions = (const char*)glGetString(GL_EXTENSIONS);
 	if (strstr(extensions, "ARB_fragment_program")) {
 		_useDepthShader = true;
+		_useDimShader = true;
 	}
 
 	if (_useDepthShader) {
@@ -156,8 +187,19 @@ void GfxOpenGL::initExtensions()
 		glProgramStringARB(GL_FRAGMENT_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB, strlen(fragSrc), fragSrc);
 		glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB, &errorPos);
 		if (errorPos != -1) {
-			warning("Error compiling fragment program:\n%s", glGetString(GL_PROGRAM_ERROR_STRING_ARB));
+			warning("Error compiling depth fragment program:\n%s", glGetString(GL_PROGRAM_ERROR_STRING_ARB));
 			_useDepthShader = false;
+		}
+
+
+		glGenProgramsARB(1, &_dimFragProgram);
+		glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, _dimFragProgram);
+
+		glProgramStringARB(GL_FRAGMENT_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB, strlen(dimFragSrc), dimFragSrc);
+		glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB, &errorPos);
+		if (errorPos != -1) {
+			warning("Error compiling dim fragment program:\n%s", glGetString(GL_PROGRAM_ERROR_STRING_ARB));
+			_useDimShader = false;
 		}
 	}
 #endif
@@ -180,8 +222,20 @@ void GfxOpenGL::setupCamera(float fov, float nclip, float fclip, float roll) {
 	glRotatef(roll, 0, 0, -1);
 }
 
-void GfxOpenGL::positionCamera(Math::Vector3d pos, Math::Vector3d interest) {
+void GfxOpenGL::positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest) {
 	Math::Vector3d up_vec(0, 0, 1);
+
+	// EMI only: transform XYZ to YXZ
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		static const float EMI_MATRIX[] = {
+			0,1,0,0,
+			1,0,0,0,
+			0,0,1,0,
+			0,0,0,1
+		};
+
+		glMultMatrixf(EMI_MATRIX);
+	}
 
 	if (pos.x() == interest.x() && pos.y() == interest.y())
 		up_vec = Math::Vector3d(0, 1, 0);
@@ -201,7 +255,7 @@ bool GfxOpenGL::isHardwareAccelerated() {
 	return true;
 }
 
-static void glShadowProjection(Math::Vector3d light, Math::Vector3d plane, Math::Vector3d normal, bool dontNegate) {
+static void glShadowProjection(const Math::Vector3d &light, const Math::Vector3d &plane, const Math::Vector3d &normal, bool dontNegate) {
 	// Based on GPL shadow projection example by
 	// (c) 2002-2003 Phaetos <phaetos@gaffga.de>
 	float d, c;
@@ -295,19 +349,19 @@ void GfxOpenGL::getBoundingBoxPos(const Mesh *model, int *x1, int *y1, int *x2, 
 	}
 
 	double t = bottom;
-	bottom = 480 - top;
-	top = 480 - t;
+	bottom = _gameHeight - top;
+	top = _gameHeight - t;
 
 	if (left < 0)
 		left = 0;
-	if (right > 639)
-		right = 639;
+	if (right >= _gameWidth)
+		right = _gameWidth - 1;
 	if (top < 0)
 		top = 0;
-	if (bottom > 479)
-		bottom = 479;
+	if (bottom >= _gameHeight)
+		bottom = _gameHeight - 1;
 
-	if (top > 479 || left > 639 || bottom < 0 || right < 0) {
+	if (top >= _gameHeight || left >= _gameWidth || bottom < 0 || right < 0) {
 		*x1 = -1;
 		*y1 = -1;
 		*x2 = -1;
@@ -321,9 +375,12 @@ void GfxOpenGL::getBoundingBoxPos(const Mesh *model, int *x1, int *y1, int *x2, 
 	*y2 = (int)bottom;
 }
 
-void GfxOpenGL::startActorDraw(Math::Vector3d pos, float scale, const Math::Angle &yaw,
-							   const Math::Angle &pitch, const Math::Angle &roll) {
+void GfxOpenGL::startActorDraw(const Math::Vector3d &pos, float scale, const Math::Angle &yaw,
+		const Math::Angle &pitch, const Math::Angle &roll, const bool inOverworld,
+		const float alpha) {
 	glEnable(GL_TEXTURE_2D);
+	glMatrixMode(GL_PROJECTION);
+	glPushMatrix();
 	glMatrixMode(GL_MODELVIEW);
 	glPushMatrix();
 	if (_currentShadowArray) {
@@ -340,15 +397,51 @@ void GfxOpenGL::startActorDraw(Math::Vector3d pos, float scale, const Math::Angl
 		glColor3f(_shadowColorR / 255.0f, _shadowColorG / 255.0f, _shadowColorB / 255.0f);
 		glShadowProjection(_currentShadowArray->pos, shadowSector->getVertices()[0], shadowSector->getNormal(), _currentShadowArray->dontNegate);
 	}
-	glTranslatef(pos.x(), pos.y(), pos.z());
-	glScalef(scale, scale, scale);
-	glRotatef(yaw.getDegrees(), 0, 0, 1);
-	glRotatef(pitch.getDegrees(), 1, 0, 0);
-	glRotatef(roll.getDegrees(), 0, 1, 0);
+
+	if (alpha < 1.f) {
+		_alpha = alpha;
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	}
+
+	if (inOverworld) {
+		// At distance 3.2, a 6.4x4.8 actor fills the screen.
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		float right = 1;
+		float top = right * 0.75;
+		glFrustum(-right, right, -top, top, 1, 3276.8f);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
+		glScalef(-1.0, 1.0, -1.0);
+		glRotatef(180, 0, 0, -1);
+		glTranslatef(pos.x(), pos.y(), pos.z());
+	} else {
+		glTranslatef(pos.x(), pos.y(), pos.z());
+		glScalef(scale, scale, scale);
+		// EMI uses Y axis as down-up, so we need to rotate differently.
+		if (g_grim->getGameType() == GType_MONKEY4) {
+			glRotatef(yaw.getDegrees(), 0, -1, 0);
+			glRotatef(pitch.getDegrees(), 1, 0, 0);
+			glRotatef(roll.getDegrees(), 0, 0, 1);
+		} else {
+			glRotatef(yaw.getDegrees(), 0, 0, 1);
+			glRotatef(pitch.getDegrees(), 1, 0, 0);
+			glRotatef(roll.getDegrees(), 0, 1, 0);
+		}
+	}
 }
 
 void GfxOpenGL::finishActorDraw() {
+	glMatrixMode(GL_MODELVIEW);
 	glPopMatrix();
+	glMatrixMode(GL_PROJECTION);
+	glPopMatrix();
+	glMatrixMode(GL_MODELVIEW);
+	if (_alpha < 1.f) {
+		glDisable(GL_BLEND);
+		_alpha = 1.f;
+	}
 	glDisable(GL_TEXTURE_2D);
 	if (_currentShadowArray) {
 		glEnable(GL_LIGHTING);
@@ -429,25 +522,23 @@ void GfxOpenGL::set3DMode() {
 
 void GfxOpenGL::drawEMIModelFace(const EMIModel* model, const EMIMeshFace* face) {
 	int *indices = (int*)face->_indexes;
+
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_ALPHA_TEST);
 	glDisable(GL_LIGHTING);
 	glEnable(GL_TEXTURE_2D);
 
 	glBegin(GL_TRIANGLES);
-	for (int j = 0; j < face->_faceLength * 3; j++) {
-		
+	for (uint j = 0; j < face->_faceLength * 3; j++) {
 		int index = indices[j];
 		if (face->_hasTexture) {
 			glTexCoord2f(model->_texVerts[index].getX(), model->_texVerts[index].getY());
 		}
-		glColor4ub(model->_colorMap[index].r,model->_colorMap[index].g,model->_colorMap[index].b,model->_colorMap[index].a);
-		
+		glColor4ub(model->_colorMap[index].r, model->_colorMap[index].g, model->_colorMap[index].b, (int)(model->_colorMap[index].a * _alpha));
+
 		Math::Vector3d normal = model->_normals[index];
-		Math::Vector3d vertex = model->_vertices[index];
-		
-		// Transform vertices (or maybe we should have done this already?)
-		
+		Math::Vector3d vertex = model->_drawVertices[index];
+
 		glNormal3fv(normal.getData());
 		glVertex3fv(vertex.getData());
 	}
@@ -458,7 +549,7 @@ void GfxOpenGL::drawEMIModelFace(const EMIModel* model, const EMIMeshFace* face)
 	glEnable(GL_LIGHTING);
 	glColor3f(1.0f,1.0f,1.0f);
 }
-	
+
 void GfxOpenGL::drawModelFace(const MeshFace *face, float *vertices, float *vertNormals, float *textureVerts) {
 	// Support transparency in actor objects, such as the message tube
 	// in Manny's Office
@@ -493,9 +584,9 @@ void GfxOpenGL::drawSprite(const Sprite *sprite) {
 	for (int i = 0; i < 3; i++) {
 		for (int j = 0; j < 3; j++) {
 			if (i == j) {
-				modelview[i * 4 + j] = 1.0;
+				modelview[i * 4 + j] = 1.0f;
 			} else {
-				modelview[i * 4 + j] = 0.0;
+				modelview[i * 4 + j] = 0.0f;
 			}
 		}
 	}
@@ -507,13 +598,13 @@ void GfxOpenGL::drawSprite(const Sprite *sprite) {
 
 	glBegin(GL_POLYGON);
 	glTexCoord2f(0.0f, 0.0f);
-	glVertex3f(sprite->_width / 2, sprite->_height, 0.0f);
+	glVertex3f((sprite->_width / 2) *_scaleW, sprite->_height * _scaleH, 0.0f);
 	glTexCoord2f(0.0f, 1.0f);
-	glVertex3f(sprite->_width / 2, 0.0f, 0.0f);
+	glVertex3f((sprite->_width / 2) * _scaleW, 0.0f, 0.0f);
 	glTexCoord2f(1.0f, 1.0f);
-	glVertex3f(-sprite->_width / 2, 0.0f, 0.0f);
+	glVertex3f((-sprite->_width / 2) * _scaleW, 0.0f, 0.0f);
 	glTexCoord2f(1.0f, 0.0f);
-	glVertex3f(-sprite->_width / 2, sprite->_height, 0.0f);
+	glVertex3f((-sprite->_width / 2) * _scaleW, sprite->_height * _scaleH, 0.0f);
 	glEnd();
 
 	glEnable(GL_LIGHTING);
@@ -549,6 +640,10 @@ void GfxOpenGL::disableLights() {
 }
 
 void GfxOpenGL::setupLight(Light *light, int lightId) {
+	if (lightId >= _maxLights) {
+		return;
+	}
+
 	glEnable(GL_LIGHTING);
 	float lightColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
 	float lightPos[] = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -600,10 +695,14 @@ void GfxOpenGL::createBitmap(BitmapData *bitmap) {
 
 	if (bitmap->_format != 1) {
 		for (int pic = 0; pic < bitmap->_numImages; pic++) {
-			uint16 *zbufPtr = reinterpret_cast<uint16 *>(bitmap->getImageData(pic));
+			uint16 *zbufPtr = reinterpret_cast<uint16 *>(bitmap->getImageData(pic).getRawBuffer());
 			for (int i = 0; i < (bitmap->_width * bitmap->_height); i++) {
-				uint16 val = READ_LE_UINT16(bitmap->getImageData(pic) + 2 * i);
-				zbufPtr[i] = 0xffff - ((uint32) val) * 0x10000 / 100 / (0x10000 - val);
+				uint16 val = READ_LE_UINT16(zbufPtr + i);
+				// fix the value if it is incorrectly set to the bitmap transparency color
+				if (val == 0xf81f) {
+					val = 0;
+				}
+				zbufPtr[i] = 0xffff - ((uint32)val) * 0x10000 / 100 / (0x10000 - val);
 			}
 
 			// Flip the zbuffer image to match what GL expects
@@ -649,7 +748,7 @@ void GfxOpenGL::createBitmap(BitmapData *bitmap) {
 					texData = new byte[4 * bitmap->_width * bitmap->_height];
 				// Convert data to 32-bit RGBA format
 				byte *texDataPtr = texData;
-				uint16 *bitmapData = reinterpret_cast<uint16 *>(bitmap->getImageData(pic));
+				uint16 *bitmapData = reinterpret_cast<uint16 *>(bitmap->getImageData(pic).getRawBuffer());
 				for (int i = 0; i < bitmap->_width * bitmap->_height; i++, texDataPtr += 4, bitmapData++) {
 					uint16 pixel = *bitmapData;
 					int r = pixel >> 11;
@@ -667,10 +766,10 @@ void GfxOpenGL::createBitmap(BitmapData *bitmap) {
 				}
 				texOut = texData;
 			} else if (bitmap->_format == 1 && bitmap->_colorFormat == BM_RGB1555) {
-				bitmap->convertToColorFormat(pic, BM_RGBA);
-				texOut = (byte *)bitmap->getImageData(pic);
+				bitmap->convertToColorFormat(pic, Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+				texOut = (byte *)bitmap->getImageData(pic).getRawBuffer();
 			} else {
-				texOut = (byte *)bitmap->getImageData(pic);
+				texOut = (byte *)bitmap->getImageData(pic).getRawBuffer();
 			}
 
 			for (int i = 0; i < bitmap->_numTex; i++) {
@@ -686,7 +785,7 @@ void GfxOpenGL::createBitmap(BitmapData *bitmap) {
 
 			for (int y = 0; y < bitmap->_height; y += BITMAP_TEXTURE_SIZE) {
 				for (int x = 0; x < bitmap->_width; x += BITMAP_TEXTURE_SIZE) {
-					int width  = (x + BITMAP_TEXTURE_SIZE >= bitmap->_width)  ? (bitmap->_width  - x) : BITMAP_TEXTURE_SIZE;
+					int width  = (x + BITMAP_TEXTURE_SIZE >= bitmap->_width) ? (bitmap->_width - x) : BITMAP_TEXTURE_SIZE;
 					int height = (y + BITMAP_TEXTURE_SIZE >= bitmap->_height) ? (bitmap->_height - y) : BITMAP_TEXTURE_SIZE;
 					glBindTexture(GL_TEXTURE_2D, textures[cur_tex_idx]);
 					glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type,
@@ -699,10 +798,11 @@ void GfxOpenGL::createBitmap(BitmapData *bitmap) {
 		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
 		delete[] texData;
+		bitmap->freeData();
 	}
 }
 
-void GfxOpenGL::drawBitmap(const Bitmap *bitmap) {
+void GfxOpenGL::drawBitmap(const Bitmap *bitmap, int dx, int dy) {
 	int format = bitmap->getFormat();
 	if ((format == 1 && !_renderBitmaps) || (format == 5 && !_renderZBitmaps)) {
 		return;
@@ -721,8 +821,9 @@ void GfxOpenGL::drawBitmap(const Bitmap *bitmap) {
 	if (bitmap->getFormat() == 1 && bitmap->getHasTransparency()) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	} else
+	} else {
 		glDisable(GL_BLEND);
+	}
 	glDisable(GL_LIGHTING);
 	glEnable(GL_TEXTURE_2D);
 
@@ -730,7 +831,7 @@ void GfxOpenGL::drawBitmap(const Bitmap *bitmap) {
 	if (bitmap->getFormat() == 5 && !_useDepthShader) {
 		// Only draw the manual zbuffer when enabled
 		if (bitmap->getActiveImage() - 1 < bitmap->getNumImages()) {
-			drawDepthBitmap(bitmap->getX(), bitmap->getY(), bitmap->getWidth(), bitmap->getHeight(), bitmap->getData(bitmap->getActiveImage() - 1));
+			drawDepthBitmap(dx, dy, bitmap->getWidth(), bitmap->getHeight(), (char *)bitmap->getData(bitmap->getActiveImage() - 1).getRawBuffer());
 		} else {
 			warning("zbuffer image has index out of bounds! %d/%d", bitmap->getActiveImage(), bitmap->getNumImages());
 		}
@@ -747,31 +848,31 @@ void GfxOpenGL::drawBitmap(const Bitmap *bitmap) {
 		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 		glDepthMask(GL_TRUE);
 #ifdef GL_ARB_fragment_program
+		glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, _fragmentProgram);
 		glEnable(GL_FRAGMENT_PROGRAM_ARB);
 #endif
 	}
 
 	glEnable(GL_SCISSOR_TEST);
-	glScissor(bitmap->getX(), _screenHeight - (bitmap->getY() + bitmap->getHeight()), bitmap->getWidth(), bitmap->getHeight());
+	glScissor((int)(dx * _scaleW), _screenHeight - (int)(((dy + bitmap->getHeight())) * _scaleH), (int)(bitmap->getWidth() * _scaleW), (int)(bitmap->getHeight() * _scaleH));
 	int cur_tex_idx = bitmap->getNumTex() * (bitmap->getActiveImage() - 1);
-	for (int y = bitmap->getY(); y < (bitmap->getY() + bitmap->getHeight()); y += BITMAP_TEXTURE_SIZE) {
-		for (int x = bitmap->getX(); x < (bitmap->getX() + bitmap->getWidth()); x += BITMAP_TEXTURE_SIZE) {
+	for (int y = dy; y < (dy + bitmap->getHeight()); y += BITMAP_TEXTURE_SIZE) {
+		for (int x = dx; x < (dx + bitmap->getWidth()); x += BITMAP_TEXTURE_SIZE) {
 			textures = (GLuint *)bitmap->getTexIds();
 			glBindTexture(GL_TEXTURE_2D, textures[cur_tex_idx]);
 			glBegin(GL_QUADS);
 			glTexCoord2f(0.0f, 0.0f);
-			glVertex2i(x, y);
+			glVertex2f(x * _scaleW, y * _scaleH);
 			glTexCoord2f(1.0f, 0.0f);
-			glVertex2i(x + BITMAP_TEXTURE_SIZE, y);
+			glVertex2f((x + BITMAP_TEXTURE_SIZE) * _scaleW, y * _scaleH);
 			glTexCoord2f(1.0f, 1.0f);
-			glVertex2i(x + BITMAP_TEXTURE_SIZE, y + BITMAP_TEXTURE_SIZE);
+			glVertex2f((x + BITMAP_TEXTURE_SIZE) * _scaleW, (y + BITMAP_TEXTURE_SIZE)  * _scaleH);
 			glTexCoord2f(0.0f, 1.0f);
-			glVertex2i(x, y + BITMAP_TEXTURE_SIZE);
+			glVertex2f(x * _scaleW, (y + BITMAP_TEXTURE_SIZE) * _scaleH);
 			glEnd();
 			cur_tex_idx++;
 		}
 	}
-
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_TEXTURE_2D);
 	glDisable(GL_BLEND);
@@ -797,8 +898,7 @@ void GfxOpenGL::destroyBitmap(BitmapData *bitmap) {
 	}
 }
 
-struct FontUserData
-{
+struct FontUserData {
 	int size;
 	GLuint texture;
 };
@@ -817,20 +917,12 @@ void GfxOpenGL::createFont(Font *font) {
 	for (uint i = 0; i < dataSize; i++, texDataPtr += bpp, bitmapData++) {
 		byte pixel = *bitmapData;
 		if (pixel == 0x00) {
-			texDataPtr[0] = 0;
-			texDataPtr[1] = 0;
-			texDataPtr[2] = 0;
-			texDataPtr[3] = 0;
+			texDataPtr[0] = texDataPtr[1] = texDataPtr[2] = texDataPtr[3] = 0;
 		} else if (pixel == 0x80) {
-			texDataPtr[0] = 0;
-			texDataPtr[1] = 0;
-			texDataPtr[2] = 0;
+			texDataPtr[0] = texDataPtr[1] = texDataPtr[2] = 0;
 			texDataPtr[3] = 255;
 		} else if (pixel == 0xFF) {
-			texDataPtr[0] = 255;
-			texDataPtr[1] = 255;
-			texDataPtr[2] = 255;
-			texDataPtr[3] = 255;
+			texDataPtr[0] = texDataPtr[1] = texDataPtr[2] = texDataPtr[3] = 255;
 		}
 	}
 	int size = 0;
@@ -929,40 +1021,40 @@ void GfxOpenGL::drawTextObject(TextObject *text) {
 	glEnable(GL_TEXTURE_2D);
 	glDepthMask(GL_FALSE);
 
-	const Color *color = text->getFGColor();
+	const Color &color = text->getFGColor();
 	Font *font = text->getFont();
 
-	glColor3f(color->getRed()/255.f, color->getGreen()/255.f, color->getBlue()/255.f);
+	glColor3f(color.getRed() / 255.f, color.getGreen() / 255.f, color.getBlue() / 255.f);
 	FontUserData *userData = (FontUserData *)font->getUserData();
 	if (!userData)
 		error("Could not get font userdata");
-	int size = userData->size;
+	float size = userData->size * _scaleW;
 	GLuint texture = userData->texture;
-	int y, x;
 	const Common::String *lines = text->getLines();
 	int numLines = text->getNumLines();
 	for (int j = 0; j < numLines; ++j) {
 		const Common::String &line = lines[j];
-		x = text->getLineX(j);
-		y = text->getLineY(j);
+		int x = text->getLineX(j);
+		int y = text->getLineY(j);
 		for (uint i = 0; i < line.size(); ++i) {
 			uint8 character = line[i];
-			int w = y + font->getCharStartingLine(character) + font->getBaseOffsetY();
-			int z = x + font->getCharStartingCol(character);
-
+			float w = y + font->getCharStartingLine(character) + font->getBaseOffsetY();
+			float z = x + font->getCharStartingCol(character);
+			z *= _scaleW;
+			w *= _scaleH;
 			glBindTexture(GL_TEXTURE_2D, texture);
 			float width = 1 / 16.f;
-			float cx = ((character-1) % 16) / 16.0f;
-			float cy = ((character-1) / 16) / 16.0f;
+			float cx = ((character - 1) % 16) / 16.0f;
+			float cy = ((character - 1) / 16) / 16.0f;
 			glBegin(GL_QUADS);
 			glTexCoord2f(cx, cy);
-			glVertex2i(z, w);
+			glVertex2f(z, w);
 			glTexCoord2f(cx + width, cy);
-			glVertex2i(z + size, w);
+			glVertex2f(z + size, w);
 			glTexCoord2f(cx + width, cy + width);
-			glVertex2i(z + size, w + size);
+			glVertex2f(z + size, w + size);
 			glTexCoord2f(cx, cy + width);
-			glVertex2i(z, w + size);
+			glVertex2f(z, w + size);
 			glEnd();
 			x += font->getCharWidth(character);
 		}
@@ -985,11 +1077,11 @@ void GfxOpenGL::createMaterial(Texture *material, const char *data, const CMap *
 	glGenTextures(1, (GLuint *)material->_texture);
 	char *texdata = new char[material->_width * material->_height * 4];
 	char *texdatapos = texdata;
-	
+
 	if (cmap != NULL) { // EMI doesn't have colour-maps
 		for (int y = 0; y < material->_height; y++) {
 			for (int x = 0; x < material->_width; x++) {
-				uint8 col = *(uint8 *)(data);
+				uint8 col = *(const uint8 *)(data);
 				if (col == 0) {
 					memset(texdatapos, 0, 4); // transparent
 					if (!material->_hasAlpha) {
@@ -1006,7 +1098,7 @@ void GfxOpenGL::createMaterial(Texture *material, const char *data, const CMap *
 	} else {
 		memcpy(texdata, data, material->_width * material->_height * material->_bpp);
 	}
-	
+
 	GLuint format = 0;
 	GLuint internalFormat = 0;
 	if (material->_colorFormat == BM_RGBA) {
@@ -1016,7 +1108,7 @@ void GfxOpenGL::createMaterial(Texture *material, const char *data, const CMap *
 		format = GL_BGR;
 		internalFormat = GL_RGB;
 	}
-	
+
 	GLuint *textures = (GLuint *)material->_texture;
 	glBindTexture(GL_TEXTURE_2D, textures[0]);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -1030,7 +1122,7 @@ void GfxOpenGL::createMaterial(Texture *material, const char *data, const CMap *
 void GfxOpenGL::selectMaterial(const Texture *material) {
 	GLuint *textures = (GLuint *)material->_texture;
 	glBindTexture(GL_TEXTURE_2D, textures[0]);
-	
+
 	// Grim has inverted tex-coords, EMI doesn't
 	if (g_grim->getGameType() != GType_MONKEY4) {
 		glMatrixMode(GL_TEXTURE);
@@ -1048,9 +1140,9 @@ void GfxOpenGL::destroyMaterial(Texture *material) {
 }
 
 void GfxOpenGL::drawDepthBitmap(int x, int y, int w, int h, char *data) {
-	//	if (num != 0) {
-	//		warning("Animation not handled yet in GL texture path");
-	//	}
+	//if (num != 0) {
+	//	warning("Animation not handled yet in GL texture path");
+	//}
 
 	if (y + h == 480) {
 		glRasterPos2i(x, _screenHeight - 1);
@@ -1113,8 +1205,8 @@ void GfxOpenGL::prepareMovieFrame(Graphics::Surface* frame) {
 	}
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-	_smushWidth = width;
-	_smushHeight = height;
+	_smushWidth = (int)(width * _scaleW);
+	_smushHeight = (int)(height * _scaleH);
 }
 
 void GfxOpenGL::drawMovieFrame(int offsetX, int offsetY) {
@@ -1136,21 +1228,24 @@ void GfxOpenGL::drawMovieFrame(int offsetX, int offsetY) {
 	glDepthMask(GL_FALSE);
 	glEnable(GL_SCISSOR_TEST);
 
+	offsetX = (int)(offsetX * _scaleW);
+	offsetY = (int)(offsetY * _scaleH);
+
 	glScissor(offsetX, _screenHeight - (offsetY + _smushHeight), _smushWidth, _smushHeight);
 
 	int curTexIdx = 0;
-	for (int y = 0; y < _smushHeight; y += BITMAP_TEXTURE_SIZE) {
-		for (int x = 0; x < _smushWidth; x += BITMAP_TEXTURE_SIZE) {
+	for (int y = 0; y < _smushHeight; y += (int)(BITMAP_TEXTURE_SIZE * _scaleH)) {
+		for (int x = 0; x < _smushWidth; x += (int)(BITMAP_TEXTURE_SIZE * _scaleW)) {
 			glBindTexture(GL_TEXTURE_2D, _smushTexIds[curTexIdx]);
 			glBegin(GL_QUADS);
 			glTexCoord2f(0, 0);
-			glVertex2i(x + offsetX, y + offsetY);
+			glVertex2f(x + offsetX, y + offsetY);
 			glTexCoord2f(1.0f, 0.0f);
-			glVertex2i(x + offsetX + BITMAP_TEXTURE_SIZE, y + offsetY);
+			glVertex2f(x + offsetX + BITMAP_TEXTURE_SIZE * _scaleW, y + offsetY);
 			glTexCoord2f(1.0f, 1.0f);
-			glVertex2i(x + offsetX + BITMAP_TEXTURE_SIZE, y + offsetY + BITMAP_TEXTURE_SIZE);
+			glVertex2f(x + offsetX + BITMAP_TEXTURE_SIZE * _scaleW, y + offsetY + BITMAP_TEXTURE_SIZE * _scaleH);
 			glTexCoord2f(0.0f, 1.0f);
-			glVertex2i(x + offsetX, y + offsetY + BITMAP_TEXTURE_SIZE);
+			glVertex2f(x + offsetX, y + offsetY + BITMAP_TEXTURE_SIZE * _scaleH);
 			glEnd();
 			curTexIdx++;
 		}
@@ -1197,7 +1292,7 @@ void GfxOpenGL::drawEmergString(int x, int y, const char *text, const Color &fgC
 	glColor3f(1.0f, 1.0f, 1.0f);
 
 	glListBase(_emergFont);
-	glCallLists(strlen(text), GL_UNSIGNED_BYTE, (GLubyte *)text);
+	glCallLists(strlen(text), GL_UNSIGNED_BYTE, (const GLubyte *)text);
 
 	glEnable(GL_LIGHTING);
 
@@ -1206,40 +1301,33 @@ void GfxOpenGL::drawEmergString(int x, int y, const char *text, const Color &fgC
 }
 
 Bitmap *GfxOpenGL::getScreenshot(int w, int h) {
-	uint16 *buffer = new uint16[w * h];
-	uint32 *src = (uint32 *)_storedDisplay;
+	Graphics::PixelBuffer buffer = Graphics::PixelBuffer::createBuffer<565>(w * h, DisposeAfterUse::YES);
+	Graphics::PixelBuffer src(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24), _screenWidth * _screenHeight, DisposeAfterUse::YES);
+	glReadPixels(0, 0, _screenWidth, _screenHeight, GL_RGBA, GL_UNSIGNED_BYTE, src.getRawBuffer());
 
-	int step = 0;
-	for (int y = 0; y <= 479; y++) {
-		for (int x = 0; x <= 639; x++) {
-			uint32 pixel = *(src + y * 640 + x);
-			uint8 r = (pixel & 0xFF0000);
-			uint8 g = (pixel & 0x00FF00);
-			uint8 b = (pixel & 0x0000FF);
-			uint32 color = (r + g + b) / 3;
-			src[step++] = ((color << 24) | (color << 16) | (color << 8) | color);
+	int i1 = (_screenWidth * w - 1) / _screenWidth + 1;
+	int j1 = (_screenHeight * h - 1) / _screenHeight + 1;
+
+	for (int j = 0; j < j1; j++) {
+		for (int i = 0; i < i1; i++) {
+			int x0 = i * _screenWidth / w;
+			int x1 = ((i + 1) * _screenWidth - 1) / w + 1;
+			int y0 = j * _screenHeight / h;
+			int y1 = ((j + 1) * _screenHeight - 1) / h + 1;
+			uint32 color = 0;
+			for (int y = y0; y < y1; y++) {
+				for (int x = x0; x < x1; x++) {
+					uint8 lr, lg, lb;
+					src.getRGBAt(y * _screenWidth + x, lr, lg, lb);
+					color += (lr + lg + lb) / 3;
+				}
+			}
+			color /= (x1 - x0) * (y1 - y0);
+			buffer.setPixelAt((h - j - 1) * w + i, color, color, color);
 		}
 	}
 
-	float step_x = _screenWidth * 1.0f / w;
-	float step_y = _screenHeight * 1.0f / h;
-	step = 0;
-	for (float y = 0; y < 479; y += step_y) {
-		for (float x = 0; x < 639; x += step_x) {
-			uint32 pixel = *(src + (int)y * _screenWidth + (int)x);
-			uint8 r = (pixel & 0xFF0000) >> 16;
-			uint8 g = (pixel & 0x00FF00) >> 8;
-			uint8 b = (pixel & 0x0000FF);
-			int pos = step / w;
-			int wpos = step - pos * w;
-			// source is upside down, flip appropriately while storing
-			buffer[h * w - (pos * w + w - wpos)] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-			step++;
-		}
-	}
-
-	Bitmap *screenshot = new Bitmap((char *)buffer, w, h, 16, "screenshot");
-	delete[] buffer;
+	Bitmap *screenshot = new Bitmap(buffer, w, h, "screenshot");
 	return screenshot;
 }
 
@@ -1280,8 +1368,70 @@ void GfxOpenGL::dimScreen() {
 }
 
 void GfxOpenGL::dimRegion(int x, int yReal, int w, int h, float level) {
+	x = (int)(x * _scaleW);
+	yReal = (int)(yReal *_scaleH);
+	w = (int)(w * _scaleW);
+	h = (int)(h * _scaleH);
+	int y = _screenHeight - yReal - h;
+
+#ifdef GL_ARB_fragment_program
+	if (_useDimShader) {
+		GLuint texture;
+		glGenTextures(1, &texture);
+		glBindTexture(GL_TEXTURE_2D, texture);
+
+		glTexImage2D(GL_TEXTURE_2D, 0, 3, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+		glViewport(0, 0, _screenWidth, _screenHeight);
+
+		// copy the data over to the texture
+		glBindTexture(GL_TEXTURE_2D, texture);
+		glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, x, y, w, h, 0);
+
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		glOrtho(0, _screenWidth, 0, _screenHeight, 0, 1);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
+		glMatrixMode(GL_TEXTURE);
+		glLoadIdentity();
+
+		glDisable(GL_LIGHTING);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_ALPHA_TEST);
+		glDepthMask(GL_FALSE);
+		glEnable(GL_SCISSOR_TEST);
+
+		glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, _dimFragProgram);
+		glEnable(GL_FRAGMENT_PROGRAM_ARB);
+		glProgramLocalParameter4fARB(GL_FRAGMENT_PROGRAM_ARB, 0, level, 0, 0, 0);
+
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, texture);
+
+		glBegin(GL_QUADS);
+		glTexCoord2f(0, 0);
+		glVertex2f(x, y);
+		glTexCoord2f(1.0f, 0.0f);
+		glVertex2f(x + w, y);
+		glTexCoord2f(1.0f, 1.0f);
+		glVertex2f(x + w, y + h);
+		glTexCoord2f(0.0f, 1.0f);
+		glVertex2f(x, y + h);
+		glEnd();
+
+		glDisable(GL_FRAGMENT_PROGRAM_ARB);
+
+		glDeleteTextures(1, &texture);
+
+		return;
+	}
+#endif
+
 	uint32 *data = new uint32[w * h];
-	int y = _screenHeight - yReal;
+	y = _screenHeight - yReal;
 
 	// collect the requested area and generate the dimmed version
 	glReadPixels(x, y - h, w, h, GL_RGBA, GL_UNSIGNED_BYTE, data);
@@ -1317,8 +1467,7 @@ void GfxOpenGL::dimRegion(int x, int yReal, int w, int h, float level) {
 	delete[] data;
 }
 
-void GfxOpenGL::irisAroundRegion(int x1, int y1, int x2, int y2)
-{
+void GfxOpenGL::irisAroundRegion(int x1, int y1, int x2, int y2) {
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	glOrtho(0.0, _screenWidth, _screenHeight, 0.0, 0.0, 1.0);
@@ -1358,12 +1507,11 @@ void GfxOpenGL::irisAroundRegion(int x1, int y1, int x2, int y2)
 }
 
 void GfxOpenGL::drawRectangle(PrimitiveObject *primitive) {
-	int x1 = primitive->getP1().x;
-	int y1 = primitive->getP1().y;
-	int x2 = primitive->getP2().x+1;
-	int y2 = primitive->getP2().y+1;
-
-	const Color &color = *primitive->getColor();
+	float x1 = primitive->getP1().x * _scaleW;
+	float y1 = primitive->getP1().y * _scaleH;
+	float x2 = primitive->getP2().x * _scaleW;
+	float y2 = primitive->getP2().y * _scaleH;
+	const Color color(primitive->getColor());
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
@@ -1375,19 +1523,45 @@ void GfxOpenGL::drawRectangle(PrimitiveObject *primitive) {
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
 
-	glColor3f(color.getRed() / 255.0f, color.getGreen() / 255.0f, color.getBlue() / 255.0f);
+	glColor3ub(color.getRed(), color.getGreen(), color.getBlue());
 
 	if (primitive->isFilled()) {
 		glBegin(GL_QUADS);
+		glVertex2f(x1, y1);
+		glVertex2f(x2 + 1, y1);
+		glVertex2f(x2 + 1, y2 + 1);
+		glVertex2f(x1, y2 + 1);
+		glEnd();
 	} else {
-		glBegin(GL_LINE_LOOP);
-	}
+		glBegin(GL_QUADS);
 
-	glVertex2i(x1, y1);
-	glVertex2i(x2, y1);
-	glVertex2i(x2, y2);
-	glVertex2i(x1, y2);
-	glEnd();
+		// top line
+		glVertex2f(x1, y1);
+		glVertex2f(x2 + 1, y1);
+		glVertex2f(x2 + 1, y1 + 1);
+		glVertex2f(x1, y1 + 1);
+
+
+		// right line
+		glVertex2f(x2, y1);
+		glVertex2f(x2 + 1, y1);
+		glVertex2f(x2 + 1, y2 + 1);
+		glVertex2f(x2, y2);
+
+		// bottom line
+		glVertex2f(x1, y2);
+		glVertex2f(x2 + 1, y2);
+		glVertex2f(x2 + 1, y2 + 1);
+		glVertex2f(x1, y2 + 1);
+
+		// left line
+		glVertex2f(x1, y1);
+		glVertex2f(x1 + 1, y1);
+		glVertex2f(x1 + 1, y2 + 1);
+		glVertex2f(x1, y2);
+
+		glEnd();
+	}
 
 	glColor3f(1.0f, 1.0f, 1.0f);
 
@@ -1397,12 +1571,12 @@ void GfxOpenGL::drawRectangle(PrimitiveObject *primitive) {
 }
 
 void GfxOpenGL::drawLine(PrimitiveObject *primitive) {
-	int x1 = primitive->getP1().x;
-	int y1 = primitive->getP1().y;
-	int x2 = primitive->getP2().x;
-	int y2 = primitive->getP2().y;
+	float x1 = primitive->getP1().x * _scaleW;
+	float y1 = primitive->getP1().y * _scaleH;
+	float x2 = primitive->getP2().x * _scaleW;
+	float y2 = primitive->getP2().y * _scaleH;
 
-	const Color &color = *primitive->getColor();
+	const Color &color = primitive->getColor();
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
@@ -1416,9 +1590,11 @@ void GfxOpenGL::drawLine(PrimitiveObject *primitive) {
 
 	glColor3f(color.getRed() / 255.0f, color.getGreen() / 255.0f, color.getBlue() / 255.0f);
 
+	glLineWidth(_scaleW);
+
 	glBegin(GL_LINES);
-	glVertex2i(x1, y1);
-	glVertex2i(x2, y2);
+	glVertex2f(x1, y1);
+	glVertex2f(x2, y2);
 	glEnd();
 
 	glColor3f(1.0f, 1.0f, 1.0f);
@@ -1429,16 +1605,16 @@ void GfxOpenGL::drawLine(PrimitiveObject *primitive) {
 }
 
 void GfxOpenGL::drawPolygon(PrimitiveObject *primitive) {
-	int x1 = primitive->getP1().x;
-	int y1 = primitive->getP1().y;
-	int x2 = primitive->getP2().x;
-	int y2 = primitive->getP2().y;
-	int x3 = primitive->getP3().x;
-	int y3 = primitive->getP3().y;
-	int x4 = primitive->getP4().x;
-	int y4 = primitive->getP4().y;
+	float x1 = primitive->getP1().x * _scaleW;
+	float y1 = primitive->getP1().y * _scaleH;
+	float x2 = primitive->getP2().x * _scaleW;
+	float y2 = primitive->getP2().y * _scaleH;
+	float x3 = primitive->getP3().x * _scaleW;
+	float y3 = primitive->getP3().y * _scaleH;
+	float x4 = primitive->getP4().x * _scaleW;
+	float y4 = primitive->getP4().y * _scaleH;
 
-	const Color &color = *primitive->getColor();
+	const Color &color = primitive->getColor();
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
@@ -1453,13 +1629,13 @@ void GfxOpenGL::drawPolygon(PrimitiveObject *primitive) {
 	glColor3f(color.getRed() / 255.0f, color.getGreen() / 255.0f, color.getBlue() / 255.0f);
 
 	glBegin(GL_LINES);
-	glVertex2i(x1, y1);
-	glVertex2i(x2, y2);
+	glVertex2f(x1, y1);
+	glVertex2f(x2, y2);
 	glEnd();
 
 	glBegin(GL_LINES);
-	glVertex2i(x3, y3);
-	glVertex2i(x4, y4);
+	glVertex2f(x3, y3);
+	glVertex2f(x4, y4);
 	glEnd();
 
 	glColor3f(1.0f, 1.0f, 1.0f);
@@ -1467,6 +1643,37 @@ void GfxOpenGL::drawPolygon(PrimitiveObject *primitive) {
 	glDepthMask(GL_TRUE);
 	glEnable(GL_DEPTH_TEST);
 	glEnable(GL_LIGHTING);
+}
+
+void GfxOpenGL::createSpecialtyTextures() {
+	//make a buffer big enough to hold any of the textures
+	char *buffer = new char[256*256*4];
+
+	glReadPixels(0, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[0].create(buffer, 256, 256);
+
+	glReadPixels(256, 0, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[1].create(buffer, 256, 256);
+
+	glReadPixels(512, 0, 128, 128, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[2].create(buffer, 128, 128);
+
+	glReadPixels(512, 128, 128, 128, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[3].create(buffer, 128, 128);
+
+	glReadPixels(0, 256, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[4].create(buffer, 256, 256);
+
+	glReadPixels(256, 256, 256, 256, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[5].create(buffer, 256, 256);
+
+	glReadPixels(512, 256, 128, 128, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[6].create(buffer, 128, 128);
+
+	glReadPixels(512, 384, 128, 128, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+	_specialty[7].create(buffer, 128, 128);
+
+	delete[] buffer;
 }
 
 } // end of namespace Grim

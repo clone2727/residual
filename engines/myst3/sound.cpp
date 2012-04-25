@@ -41,12 +41,14 @@ Sound::~Sound() {
 		delete _channels[i];
 }
 
-void Sound::play(uint32 id, uint32 volume, uint16 heading, uint16 attenuation) {
-	SoundChannel *channel = getChannelForSound(id, 3);
-	channel->play(id, volume);
+void Sound::playEffect(uint32 id, uint32 volume, uint16 heading, uint16 attenuation) {
+	id = _vm->_state->valueOrVarValue(id);
+
+	SoundChannel *channel = getChannelForSound(id, kEffect);
+	channel->play(id, volume, heading, attenuation, 0, 0, 0, kEffect);
 }
 
-SoundChannel *Sound::getChannelForSound(uint32 id, uint priority) {
+SoundChannel *Sound::getChannelForSound(uint32 id, SoundType priority) {
 	// if the sound is already playing, return that channel
 	for (uint i = 0; i < kNumChannels; i++)
 		if (_channels[i]->_id == id && _channels[i]->_playing)
@@ -63,18 +65,25 @@ SoundChannel *Sound::getChannelForSound(uint32 id, uint priority) {
 void Sound::update() {
 	for (uint i = 0; i < kNumChannels; i++)
 		_channels[i]->update();
+
+	_vm->runBackgroundSoundScriptsFromNode(_vm->_state->getLocationNode());
 }
 
 SoundChannel::SoundChannel(Myst3Engine *vm) :
 	_vm(vm),
 	_playing(false),
-	_id(0) {
+	_id(0),
+	_stream(0) {
 }
 
 SoundChannel::~SoundChannel() {
 }
 
-void SoundChannel::play(uint32 id, uint32 volume) {
+void SoundChannel::play(uint32 id, uint32 volume, uint16 heading, uint16 attenuation, uint unk1, uint unk2, uint unk3, SoundType type) {
+	// TODO: Should stop and start again
+	if (_playing)
+		return;
+
 	// Load the name of the sound from its id
 	_name = _vm->_db->getSoundName(id);
 	_volume = volume;
@@ -92,6 +101,7 @@ void SoundChannel::play(uint32 id, uint32 volume) {
 
 	// Update state
 	_id = id;
+	_type = type;
 	_playing = true;
 	_vm->_state->setVar(id, 1);
 }
@@ -120,6 +130,7 @@ Audio::RewindableAudioStream *SoundChannel::makeAudioStream(const Common::String
 		return Audio::makeMP3Stream(s, DisposeAfterUse::YES);
 #else
 		warning("Unable to play sound '%s', MP3 support is not compiled in.", filename.c_str());
+		delete s;
 		return 0;
 #endif
 	} else {
@@ -133,8 +144,10 @@ void SoundChannel::update() {
 
 	_playing = g_system->getMixer()->isSoundHandleActive(_handle);
 
-	if (!_playing)
+	if (!_playing) {
 		_vm->_state->setVar(_id, 0);
+		_stream = 0;
+	}
 }
 
 } /* namespace Myst3 */

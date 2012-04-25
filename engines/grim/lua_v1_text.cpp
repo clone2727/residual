@@ -25,17 +25,17 @@
 #define FORBIDDEN_SYMBOL_EXCEPTION_stderr
 #define FORBIDDEN_SYMBOL_EXCEPTION_stdin
 
+#include "common/foreach.h"
+#include "common/system.h"
+
 #include "engines/grim/grim.h"
 #include "engines/grim/lua_v1.h"
 #include "engines/grim/localize.h"
 #include "engines/grim/actor.h"
-#include "engines/grim/lipsync.h"
 #include "engines/grim/savegame.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/resource.h"
 #include "engines/grim/inputdialog.h"
-
-#include "engines/grim/imuse/imuse.h"
+#include "engines/grim/textobject.h"
 
 #include "engines/grim/lua/lauxlib.h"
 
@@ -70,6 +70,7 @@ void Lua_V1::ChangeTextObject() {
 				if (!lua_istable(paramObj))
 					break;
 				setTextObjectParams(textObject, paramObj);
+				textObject->reposition();
 				textObject->destroy();
 			} else {
 				line = lua_getstring(paramObj);
@@ -173,8 +174,8 @@ void Lua_V1::BlastText() {
 }
 
 void Lua_V1::SetOffscreenTextPos() {
+	// called with (0,0) on dialog entry, (nil, nil) on dialog exit
 	warning("Lua_V1::SetOffscreenTextPos: implement opcode");
-	// this sets where we shouldn't put dialog maybe?
 }
 
 void Lua_V1::TextFileGetLine() {
@@ -374,10 +375,8 @@ void Lua_V1::IsMessageGoing() {
 				pushbool(actor->isTalking());
 			}
 		} else {
-			// NOTE: i'm not sure this currentTextObject stuff is totally right.
-			// if you do changes test them against the crying angelitos in the fo set.
-			// the dialog menu should appear few secods after they start crying.
-			pushbool(g_grim->getTalkingActor() != NULL);
+			// NOTE: this part is quite delicate. If you do changes test the crying angelitos in set fo.
+			pushbool(g_grim->areActorsTalking());
 		}
 	} else
 		lua_pushnil();

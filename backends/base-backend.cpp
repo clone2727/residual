@@ -31,6 +31,14 @@
 #endif
 
 
+#include "gui/message.h"
+
+void BaseBackend::displayMessageOnOSD(const char *msg) {
+	// Display the message for 1.5 seconds
+	GUI::TimedMessageDialog dialog(msg, 1500);
+	dialog.runModal();
+}
+
 void BaseBackend::initBackend() {
 	// Init Event manager
 #ifndef DISABLE_DEFAULT_EVENT_MANAGER
@@ -45,4 +53,11 @@ void BaseBackend::initBackend() {
 #endif
 
 	OSystem::initBackend();
+}
+
+void BaseBackend::fillScreen(uint32 col) {
+	Graphics::Surface *screen = lockScreen();
+	if (screen && screen->pixels)
+		memset(screen->pixels, col, screen->h * screen->pitch);
+	unlockScreen();
 }

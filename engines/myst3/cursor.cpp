@@ -24,9 +24,10 @@
 #include "engines/myst3/directorysubentry.h"
 #include "engines/myst3/myst3.h"
 #include "engines/myst3/scene.h"
+#include "engines/myst3/state.h"
 
 #include "graphics/surface.h"
-#include "graphics/imagedec.h"
+#include "graphics/decoders/bmp.h"
 
 namespace Myst3 {
 
@@ -57,6 +58,7 @@ static CursorData availableCursors[13] = {
 Cursor::Cursor(Myst3Engine *vm) :
 	_vm(vm),
 	_position(320, 210),
+	_hideLevel(0),
 	_lockedAtCenter(false) {
 
 	// Load available cursors
@@ -75,23 +77,28 @@ void Cursor::loadAvailableCursors() {
 			error("Cursor %d does not exist", availableCursors[i].nodeID);
 
 		Common::MemoryReadStream *bmpStream = cursorDesc->getData();
-		Graphics::Surface *surface = Graphics::ImageDecoder::loadFile(*bmpStream, Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+
+		Graphics::BitmapDecoder bitmapDecoder;
+		if (!bitmapDecoder.loadStream(*bmpStream))
+			error("Could not decode Myst III bitmap");
+		const Graphics::Surface *surfaceBGRA = bitmapDecoder.getSurface();
+		Graphics::Surface *surfaceRGBA = surfaceBGRA->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+		
 		delete bmpStream;
 
 		// Apply the colorkey for transparency
-		for (uint u = 0; u < surface->w; u++) {
-			for (uint v = 0; v < surface->h; v++) {
-				uint32 *pixel = (uint32*)(surface->getBasePtr(u, v));
+		for (uint u = 0; u < surfaceRGBA->w; u++) {
+			for (uint v = 0; v < surfaceRGBA->h; v++) {
+				uint32 *pixel = (uint32*)(surfaceRGBA->getBasePtr(u, v));
 				if (*pixel == 0xFF00FF00)
 					*pixel = 0x0000FF00;
 
 			}
 		}
 
-		availableCursors[i].texture = _vm->_gfx->createTexture(surface);
-
-		surface->free();
-		delete surface;
+		availableCursors[i].texture = _vm->_gfx->createTexture(surfaceRGBA);
+		surfaceRGBA->free();
+		delete surfaceRGBA;
 	}
 }
 
@@ -106,7 +113,8 @@ Cursor::~Cursor() {
 }
 
 void Cursor::changeCursor(uint32 index) {
-	assert(index <= 12);
+	if (index > 12)
+		return;
 
 	_currentCursorID = index;
 }
@@ -129,8 +137,7 @@ void Cursor::updatePosition(Common::Point &mouse) {
 	}
 }
 
-void Cursor::draw()
-{
+void Cursor::draw() {
 	CursorData &cursor = availableCursors[_currentCursorID];
 
 	// Rect where to draw the cursor
@@ -140,13 +147,37 @@ void Cursor::draw()
 	// Rect where to draw the cursor
 	Common::Rect textureRect = Common::Rect(cursor.texture->width, cursor.texture->height);
 
-	float transparency;
-	if (_lockedAtCenter)
-		transparency = cursor.transparency;
-	else
-		transparency = 1.0f;
+	float transparency = 1.0;
+
+	int32 varTransparency = _vm->_state->getCursorTransparency();
+	if (_lockedAtCenter || varTransparency == 0) {
+		if (varTransparency >= 0)
+			transparency = varTransparency / 100.0;
+		else
+			transparency = cursor.transparency;
+	}
 
 	_vm->_gfx->drawTexturedRect2D(screenRect, textureRect, cursor.texture, transparency);
+}
+
+void Cursor::setVisible(bool show) {
+	if (show)
+		_hideLevel = MAX<int32>(0, --_hideLevel);
+	else
+		_hideLevel++;
+}
+
+bool Cursor::isVisible() {
+	return !_hideLevel && !_vm->_state->getCursorHidden() && !_vm->_state->getCursorLocked();
+}
+
+void Cursor::getDirection(float &pitch, float &heading) {
+	if (_lockedAtCenter) {
+		pitch = _vm->_state->getLookAtPitch();
+		heading = _vm->_state->getLookAtHeading();
+	} else {
+		_vm->_gfx->screenPosToDirection(_position, pitch, heading);
+	}
 }
 
 } /* namespace Myst3 */

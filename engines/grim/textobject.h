@@ -24,26 +24,28 @@
 #define GRIM_TEXTOBJECT_H
 
 #include "engines/grim/pool.h"
+#include "engines/grim/color.h"
+
+#include "common/endian.h"
 
 namespace Grim {
 
 class SaveGame;
 class Font;
-class PoolColor;
 
 class TextObjectCommon {
 public:
-	void setX(int x) { _x = x; }
+	void setX(int x) { _x = x; _positioned = false; }
 	int getX() { return _x; }
 
-	void setY(int y) { _y = y; }
+	void setY(int y) { _y = y; _positioned = false; }
 	int getY() { return _y; }
 
 	void setFont(Font *font) { _font = font; }
 	Font *getFont() { return _font; }
 
-	void setFGColor(PoolColor *fgColor) { _fgColor = fgColor; }
-	PoolColor *getFGColor() { return _fgColor; }
+	void setFGColor(const Color &fgColor) { _fgColor = fgColor; }
+	Color getFGColor() { return _fgColor; }
 
 	void setJustify(int justify) { _justify = justify; }
 	int getJustify() { return _justify; }
@@ -60,24 +62,28 @@ public:
 protected:
 	TextObjectCommon();
 
-	PoolColor *_fgColor;
+	Color _fgColor;
 	int _x, _y;
+	int _posX, _posY;
 	int _width, _height;
 	int _justify;
 	Font *_font;
 	int _duration;
+	bool _positioned;
 };
 
 class TextObjectDefaults : public TextObjectCommon {
 
 };
 
-class TextObject : public PoolObject<TextObject, MKTAG('T', 'E', 'X', 'T')>,
+class TextObject : public PoolObject<TextObject>,
                    public TextObjectCommon {
 public:
 	TextObject(bool blastDraw, bool isSpeech = false);
 	TextObject();
 	~TextObject();
+
+	static int32 getStaticTag() { return MKTAG('T', 'E', 'X', 'T'); }
 
 	void setDefaults(TextObjectDefaults *defaults);
 	void setText(const Common::String &text);
@@ -101,6 +107,7 @@ public:
 	void update();
 
 	void destroy();
+	void reposition();
 
 	void saveState(SaveGame *state) const;
 	bool restoreState(SaveGame *state);

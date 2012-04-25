@@ -11,62 +11,49 @@ Contents:
 8. Contact
 9. Debugging
 
---------------------
+----------------------
 1. What is ResidualVM?
---------------------
+----------------------
 ResidualVM is a game engine reimplementation that allows you 
 to play 3D adventure games such as Grim Fandango and Myst3.
 
 ResidualVM utilizes OpenGL for 3D graphics hardware acceleration.
 A software renderer is also included for machines without hardware OpenGL.
 
-----------------------------
+
+------------------------------
 2. Current state of ResidualVM
-----------------------------
-ResidualVM is a fairly slow developing project and is still very much considered
-alpha. 
+------------------------------
 
 2.1 - Which games does ResidualVM support?
-----------------------------------------
-Currently ResidualVM supports the GrimE-engine, but only Grim Fandango, and has partial support for Myst 3.
+------------------------------------------
+Currently ResidualVM supports the GrimE-engine, but only Grim Fandango,
+and has partial support for Myst 3.
 
 2.1.1 . GrimE-games support 
 -----------------------------------
-Escape From Monkey Island        - Not supported*
-Escape From Monkey Island (demo) - Not supported*
 Grim Fandango                    - Completable with glitches
 Grim Fandango (demo)             - Completable with glitches
+Escape From Monkey Island        - Not supported, play only intro
+Escape From Monkey Island (demo) - Not supported, play only intro
 
 2.1.2 . Other games support
 -----------------------------------
-Myst 3				- Partially playable
+Myst 3                           - Partially playable
 
 Specifics can be found at
 http://www.residualvm.org/compatibility/
 
-* It is possible, but far from promised, that 'Escape from Monkey Island'
-  may be supported in the distant future.
-
-2.2 - What is the state of ResidualVM? 
-------------------------------------
-Basic gameplay works, including cutscenes.  Grim Fandango is completable 
-but many features are either missing or unstable. Crashes are likely.
-
-Also beware that since ResidualVM is currently in an alpha-state, there is
-no guarantee that your saves will continue to work with newer builds.
-
 For more information, see the page on ResidualVM at the wiki page:
-http://apps.sourceforge.net/mediawiki/residual
+http://wiki.residualvm.org/
 
 
 ---------------------
 3. Running ResidualVM
 ---------------------
-As ResidualVM is not yet stable, easy to use, or complete.
-Some technical ability might be required.
 
 3.1 - Required files
-------------------------------------
+--------------------
 You will need the data files for Grim Fandango, as well as the patch,
 if your game is an older release.
 
@@ -75,28 +62,21 @@ Specifically you need these files from your Grim CDs:
 GRIM.TAB
 
 3.2 - Running Grim Fandango
-------------------------------------
-1. Copy the neccessary files to a folder on your Hard Drive.
-2. Apply the patch, if you don't have it*
-2. Open ResidualVM
-3. Choose "Add Game"
-4. Select the folder you created in step 1
-5. Click Start
-
-* Patched versions have subtitles in cutscenes, and can complete
-the game, unpatched versions don't have subtitles in cutscenes, 
-and can't complete the game. 
+---------------------------
+1. Copy the neccessary files to a folder on your Hard Drive
+2. Copy the patch to a game folder
+3. Open ResidualVM
+4. Choose "Add Game"
+5. Select the folder you created in step 1
+6. Click Start
 
 The patch can be downloaded from:
-http://demos.residualvm.org/patches/Gfupd101.exe and obviously requires
-Windows or something similar to unpack and apply it. (There does exist
-tools to unpack it on any platform in the residualvm-tools git-repos).
+http://demos.residualvm.org/patches/gfupd101.exe
+Simply download it and put gfupd101.exe in the same folder as the .LAB-files,
+and you are good to go.
 
-Additional information on how to apply the patch, can be found in our
-wiki at: http://sourceforge.net/apps/mediawiki/residual/index.php?title=Grim_Fandango_Patch
+If you want to play with software-rendering, see the configuration-section below.
 
-If you want to try to play with fullscreen, or you want to play with
-software-rendering, see the configuration-section below.
 
 -----------------------------
 4 - Default Keyboard-settings
@@ -106,10 +86,11 @@ Arrow keys : Movement
 Shift      : Hold to run
 Enter      : Selects items in inventory, conversation, etc
 Escape     : Skips cutscenes, exits certain screens
-.	   : Skips dialogue
+.          : Skips dialogue
 q          : Exit Dialog Menu
 Ctrl + c   : Force Quit (from command-line)
 Alt + x    : Quit (ingame)
+Alt + enter: Switch between windowed-mode and fullscreen
 F1         : Menu
 
 
@@ -119,7 +100,7 @@ F1         : Menu
 Currently, not all the settings for ResidualVM are available through the GUI,
 if you have problems with getting anything to work, first try to pass the settings
 from the command line, then, if that doesn't work, try to change your configuration file
-manually
+manually.
 
 5.1 - Location of configuration file
 ------------------------------------
@@ -152,24 +133,18 @@ The following settings are currently available in the config-file,
 however some of them might not work with your current build. And 
 some of them might make ResidualVM crash, or behave in weird ways.
 
-|-------------------|-------------|-----------------------------------------------------|
-|Setting            | Values      | Effect                                              |
-|-------------------|-------------|-----------------------------------------------------|
-|soft_renderer      |[true/false] | If true, then the software renderer will be used    |
-|                   |             | otherwise, ResidualVM will try to use HW-rendering. |
-|-------------------|-------------|-----------------------------------------------------|
-|fullscreen         |[true/false] | If true, then ResidualVM will attempt to run in     |
-|                   |             | fullscreen-mode, otherwise it will use a window.    |
-|-------------------|-------------|-----------------------------------------------------|
-|show_fps           |[true/false] | If true, then ResidualVM will show the current      |
-|                   |             | FPS-rate, while you play                            |
-|-------------------|-------------|-----------------------------------------------------|
-|last_set           |[set-name]   | The set you were last on, ResidualVM will try to    |
-|                   |             | continue from there                                 |
-|-------------------|-------------|-----------------------------------------------------|
-|last_save          |[save-number]| The save you last saved, ResidualVM will have that  |
-|                   |             | selected the next time you try to load a game.      |
-|-------------------|-------------|-----------------------------------------------------|
+|------------|-------------|-----------------------------------------------------|
+|Setting     | Values      | Effect                                              |
+|------------|-------------|-----------------------------------------------------|
+|show_fps    |[true/false] | If true, then ResidualVM will show the current      |
+|            |             | FPS-rate, while you play                            |
+|------------|-------------|-----------------------------------------------------|
+|last_set    |[set-name]   | The set you were last on, ResidualVM will try to    |
+|            |             | continue from there                                 |
+|------------|-------------|-----------------------------------------------------|
+|last_save   |[save-number]| The save you last saved, ResidualVM will have that  |
+|            |             | selected the next time you try to load a game.      |
+|------------|-------------|-----------------------------------------------------|
 
 
 ---------------------------------
@@ -178,10 +153,10 @@ some of them might make ResidualVM crash, or behave in weird ways.
 Grim Fandango had a few issues when it came out, and a few new and exciting 
 issues when you try to run it on newer hardware. ResidualVM also has a few issues
 that we know about, look here for help with them, and if you can't find help here
-try either the forums at our homepage, or IRC: #residual at freenode
+try either the forums at our homepage, or IRC: #residualvm at freenode
 
-6.1 - The game runs really slow !
-----------------------------------------
+6.1 - The game runs really slow!
+--------------------------------
 Some gfx cards do not have a fast glDrawPixels access to zbuffer
 implementation in their system driver.
 
@@ -190,16 +165,20 @@ above, but people unable to upgrade or Windows users must use software
 renderer. Software renderer is generally faster on modern platforms.
 
 6.2 - I played a bit, but can't start a new game!
--------------------------------------------
+-------------------------------------------------
 This is because the last save and visited scene is stored in your configuration
-file, either delete grim-fandango from the ResidualVM-menu, and readd it, or 
+file, either delete grim-fandango from the ResidualVM-menu, and re-add it, or 
 go to your configuration file, and clean out the last-save and last-set entries.
 
 6.3 - My Save Games don't work any more
 ---------------------------------------
-Did you recently update to a newer build of ResidualVM? ResidualVM is still alpha,
-so the save game format still is a work in progress, which means that it might
+Did you recently update to a newer build of ResidualVM? 
+Grim engine is still a work in progress, which means that it might
 change between builds. 
+
+6.4 - In fullscreen mode picture is stretched!
+----------------------------------------------
+This is know issue, in future versions it will be resolved.
 
 
 --------------
@@ -214,7 +193,7 @@ You can report bugs at our github-issue-tracker:
 http://www.github.com/residualvm/residualvm/issues
 
 Please read the Wiki regarding how to report bugs properly first though:
-http://sourceforge.net/apps/mediawiki/residual/index.php?title=Reporting_Bugs
+http://wiki.residualvm.org/index.php?title=Reporting_Bugs
 
 Remember to always have the following information in your bug reports:
 * Bug details, including instructions on reproducing it
@@ -227,9 +206,9 @@ Remember to always have the following information in your bug reports:
 8. Contact
 ----------
 Homepage: http://www.residualvm.org/
-Wiki: http://sourceforge.net/apps/mediawiki/residual/index.php?title=Main_Page
+Wiki: http://wiki.residualvm.org/
 Forums: http://forums.residualvm.org/
-IRC: #residual on freenode
+IRC: #residualvm on freenode
 
 
 ------------
@@ -270,4 +249,3 @@ Home       : Go to default position in current set
 j          : Enter jump number
 
 Note that these are only available after enabling debug-mode.
-

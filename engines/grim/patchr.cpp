@@ -33,7 +33,7 @@
 
 namespace Grim {
 
-const char *Patchr::InstructionS[8]  = {"BEGIN", "END", "REPLACE", "INSERT", "DELETE", "FILL", "COPY", NULL};
+const char *Patchr::InstructionS[9]  = {"PATCHR", "BEGIN", "END", "REPLACE", "INSERT", "DELETE", "FILL", "COPY", NULL};
 
 void Patchr::loadPatch(Common::SeekableReadStream *patchStream) {
 	Common::String line, token;
@@ -80,21 +80,32 @@ uint32 Patchr::calcIncSize(Common::Array<Op>::const_iterator start) {
 	return incSize;
 }
 
-bool Patchr::patchFile(Common::SeekableReadStream *&file, Common::String &name) {
+bool Patchr::patchFile(Common::SeekableReadStream *&file, const Common::String &name) {
 	Common::Array<Op>::const_iterator line;
 	Common::String md5;
 	uint32 maxSize, fileSize;
 	uint32 offset, offset2, size;
 	byte fill;
 
+	//Sanity, signature and version checks
+	if (_patch.empty() || _patch[0].ist != PATCHR) {
+		Debug::warning(Debug::Patchr, "Wrong patch format in %s", name.c_str());
+		return false;
+	}
+	if (_patch[0].args.size() == 0 || str2num(_patch[0].args[0]) != _kVersion) {
+		Debug::warning(Debug::Patchr, "Wrong patch version in %s", name.c_str());
+		return false;
+	}
+
 	//Compute the MD5 of the original file
 	md5 = computeStreamMD5AsString(*file, _kMd5size);
 	file->seek(0, SEEK_SET);
 
 	//Search a BEGIN statement with the right md5
+	fileSize = file->size();
 	for (line = _patch.begin(); line != _patch.end(); ++line)
-		if (line->ist == BEGIN)
-			if (md5.equalsIgnoreCase(line->args[0])) {
+		if (line->ist == BEGIN && line->args.size() >= 2)
+			if (md5.equalsIgnoreCase(line->args[0]) && str2num(line->args[1]) == fileSize) {
 				++line;
 				break;
 			}
@@ -105,7 +116,6 @@ bool Patchr::patchFile(Common::SeekableReadStream *&file, Common::String &name) 
 	}
 
 	//Calc the maximum size of resulting file and read it
-	fileSize = file->size();
 	maxSize = fileSize + calcIncSize(line);
 	if (_err)
 		return false;
@@ -195,6 +205,10 @@ bool Patchr::patchFile(Common::SeekableReadStream *&file, Common::String &name) 
 					return false;
 				}
 				memmove(_data + offset, _data + offset2, size);
+				break;
+
+			case PATCHR:
+				err("misplaced signature instruction.");
 				break;
 
 			case BEGIN:

@@ -38,13 +38,13 @@ MaterialData::MaterialData(const Common::String &filename, Common::SeekableReadS
 	_fname(filename), _cmap(cmap), _refCount(1) {
 
 	if (g_grim->getGameType() == GType_MONKEY4) {
-		initEMI(filename, data);
+		initEMI(data);
 	} else {
-		initGrim(filename, data, cmap);
+		initGrim(data);
 	}
 }
 
-void MaterialData::initGrim(const Common::String &filename, Common::SeekableReadStream *data, CMap *cmap) {
+void MaterialData::initGrim(Common::SeekableReadStream *data) {
 	uint32 tag = data->readUint32BE();
 	if (tag != MKTAG('M','A','T',' '))
 		error("invalid magic loading texture");
@@ -90,13 +90,13 @@ void loadTGA(Common::SeekableReadStream *data, Texture *t) {
 	data->seek(1, SEEK_CUR);
 	
 	int format = data->readByte();
-	if (format != 2) { // We only support uncompressed TGA, but should also support atleast RLE-RGB
+	if (!(format == 2 || format == 10)) {
 		error("Unsupported TGA-format detected: %d", format);
 	}
 	
 	data->seek(9, SEEK_CUR);
 	t->_width = data->readUint16LE();
-	t->_height = data->readUint16LE();;
+	t->_height = data->readUint16LE();
 	t->_hasAlpha = false;
 	t->_texture = NULL;
 	
@@ -114,34 +114,54 @@ void loadTGA(Common::SeekableReadStream *data, Texture *t) {
 	
 	assert(bpp == 24 || bpp == 32); // Assure we have 24/32 bpp
 	t->_data = new char[t->_width * t->_height * (bpp / 8)];
-	char *writePtr = t->_data + (t->_width * (t->_height - 1) * bpp / 8);
 	
-	// Since certain TGA's are flipped (relative to the tex-coords) and others not
-	// We'll have to handle that here, otherwise we could just do 1.0f - texCoords
-	// When drawing/loading
-	if (flipped) {
-		for (int i = 0; i < t->_height; i++) {
-			data->read(writePtr, t->_width * (bpp / 8));
-			writePtr -= (t->_width * bpp / 8);
+	if (format == 2) {
+		// Since certain TGA's are flipped (relative to the tex-coords) and others not
+		// We'll have to handle that here, otherwise we could just do 1.0f - texCoords
+		// When drawing/loading
+		if (flipped) {
+			char *writePtr = t->_data + (t->_width * (t->_height - 1) * bpp / 8);
+			for (int i = 0; i < t->_height; i++) {
+				data->read(writePtr, t->_width * (bpp / 8));
+				writePtr -= (t->_width * bpp / 8);
+			}
+		} else {
+			data->read(t->_data, t->_width * t->_height * (bpp / 8));		
 		}
-	} else {
-		data->read(t->_data, t->_width * t->_height * (bpp / 8));		
+	} else if (format == 10) {
+		// Decode Run-Length Encoding
+		char *writePtr = t->_data;
+		while (!data->eos()) {
+			byte head = data->readByte();
+			if (head & 0x80) {
+				byte num = (head & 0x7f) + 1;
+				uint32 d = data->readUint32LE();
+				for (int i = 0; i < num; ++i) {
+					*((uint32 *)writePtr) = d;
+					writePtr += 4;
+				}
+			} else {
+				++head;
+				data->read(writePtr, head*4);
+				writePtr += head*4;
+			}
+		}
 	}
 }
 	
-void MaterialData::initEMI(const Common::String &filename, Common::SeekableReadStream *data) {
+void MaterialData::initEMI(Common::SeekableReadStream *data) {
 	Common::Array<Common::String> texFileNames;
-	char *readFileName = new char[64];
+	char readFileName[64];
 
-	if (filename.hasSuffix(".sur")) {  // This expects that we want all the materials in the sur-file
+	if (_fname.hasSuffix(".sur")) {  // This expects that we want all the materials in the sur-file
 		TextSplitter *ts = new TextSplitter(data);
 		ts->setLineNumber(2); // Skip copyright-line
 		ts->expectString("version\t1.0");
 		if (ts->checkString("name:"))
-			ts->scanString("name:\t%s", 1, readFileName);
+			ts->scanString("name:%s", 1, readFileName);
 		
 		while(!ts->checkString("END_OF_SECTION")) {
-			ts->scanString("tex:\t%s", 1, readFileName);
+			ts->scanString("tex:%s", 1, readFileName);
 			Common::String mFileName(readFileName);
 			texFileNames.push_back(mFileName);
 		}
@@ -158,10 +178,12 @@ void MaterialData::initEMI(const Common::String &filename, Common::SeekableReadS
 				continue;
 			}
 			loadTGA(texData, _textures + i);
+			delete texData;
 		}
 		_numImages = texFileNames.size();
+		delete ts;
 		return;
-	} else if(filename.hasSuffix(".tga")) {
+	} else if(_fname.hasSuffix(".tga")) {
 		_numImages = 1;
 		_textures = new Texture();
 		loadTGA(data, _textures);
@@ -169,7 +191,7 @@ void MaterialData::initEMI(const Common::String &filename, Common::SeekableReadS
 		return;
 		
 	} else {
-		warning("Unknown material-format: %s", filename.c_str());
+		warning("Unknown material-format: %s", _fname.c_str());
 	}
 }
 
@@ -216,6 +238,10 @@ Material::Material(const Common::String &filename, Common::SeekableReadStream *d
 	_data = MaterialData::getMaterialData(filename, data, cmap);
 }
 
+Material::Material() :
+		Object(), _currImage(0), _data(NULL) {
+}
+
 void Material::reload(CMap *cmap) {
 	Common::String fname = _data->_fname;
 	--_data->_refCount;
@@ -243,9 +269,11 @@ void Material::select() const {
 }
 
 Material::~Material() {
-	--_data->_refCount;
-	if (_data->_refCount < 1) {
-		delete _data;
+	if (_data) {
+		--_data->_refCount;
+		if (_data->_refCount < 1) {
+			delete _data;
+		}
 	}
 }
 

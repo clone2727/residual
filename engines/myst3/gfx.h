@@ -31,8 +31,9 @@ namespace Myst3 {
 
 class Drawable {
 public:
-	virtual void draw() = 0;
-	virtual ~Drawable() {};
+	virtual void draw() {}
+	virtual void drawOverlay() {}
+	virtual ~Drawable() {}
 };
 
 class Texture {
@@ -57,7 +58,7 @@ public:
 
 	void clear();
 	void setupCameraOrtho2D();
-	void setupCameraPerspective(float pitch, float heading);
+	void setupCameraPerspective(float pitch, float heading, float fov);
 
 	Texture *createTexture(const Graphics::Surface *surface);
 	void freeTexture(Texture *texture);
@@ -72,12 +73,21 @@ public:
 
 	Graphics::Surface *getScreenshot();
 
+	void screenPosToDirection(const Common::Point screen, float &pitch, float &heading);
+
 	static const int kOriginalWidth = 640;
 	static const int kOriginalHeight = 480;
+	static const int kTopBorderHeight = 30;
+	static const int kBottomBorderHeight = 90;
+	static const int kFrameHeight = 360;
 
 protected:
 	OSystem *_system;
 	Texture *_font;
+
+	int _cubeViewport[4];
+	double _cubeProjectionMatrix[16];
+	double _cubeModelViewMatrix[16];
 
 	Common::Rect getFontCharacterRect(uint8 character);
 };

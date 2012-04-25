@@ -31,17 +31,14 @@
 #define FORBIDDEN_SYMBOL_EXCEPTION_stderr
 #define FORBIDDEN_SYMBOL_EXCEPTION_stdin
 
-#if defined(WIN32)
-#include <windows.h>
-// winnt.h defines ARRAYSIZE, but we want our own one... - this is needed before including util.h
-#undef ARRAYSIZE
-#endif
-
 #include "common/archive.h"
-#include "common/events.h"
+#include "common/debug-channels.h"
 #include "common/file.h"
+#include "common/foreach.h"
 #include "common/fs.h"
 #include "common/config-manager.h"
+
+#include "graphics/pixelbuffer.h"
 
 #include "gui/error.h"
 #include "gui/gui-manager.h"
@@ -52,7 +49,7 @@
 #include "engines/grim/grim.h"
 #include "engines/grim/lua.h"
 #include "engines/grim/lua_v1.h"
-#include "engines/grim/lua_v2.h"
+#include "engines/grim/emi/lua_v2.h"
 #include "engines/grim/actor.h"
 #include "engines/grim/movie/movie.h"
 #include "engines/grim/savegame.h"
@@ -65,16 +62,14 @@
 #include "engines/grim/primitives.h"
 #include "engines/grim/objectstate.h"
 #include "engines/grim/set.h"
+#include "engines/grim/sound.h"
+#include "engines/grim/stuffit.h"
 
 #include "engines/grim/imuse/imuse.h"
 
 #include "engines/grim/lua/lua.h"
 
 namespace Grim {
-
-// CHAR_KEY tests to see whether a keycode is for
-// a "character" handler or a "button" handler
-#define CHAR_KEY(k) ((k >= 'a' && k <= 'z') || (k >= 'A' && k <= 'Z') || (k >= '0' && k <= '9') || k == ' ')
 
 GrimEngine *g_grim = NULL;
 GfxBase *g_driver = NULL;
@@ -95,22 +90,21 @@ GrimEngine::GrimEngine(OSystem *syst, uint32 gameFlags, GrimGameType gameType, C
 	g_movie = NULL;
 	g_imuse = NULL;
 
-	_showFps = (tolower(g_registry->get("show_fps", "false")[0]) == 't');
+	_showFps = g_registry->getBool("show_fps");
 
 #ifdef USE_OPENGL
-	_softRenderer = (tolower(g_registry->get("soft_renderer", "false")[0]) == 't');
+	_softRenderer = g_registry->getBool("soft_renderer");
 #else
 	_softRenderer = true;
 #endif
 
-	_mixer->setVolumeForSoundType(Audio::Mixer::kPlainSoundType, 127);
+	_mixer->setVolumeForSoundType(Audio::Mixer::kPlainSoundType, 192);
 	_mixer->setVolumeForSoundType(Audio::Mixer::kSFXSoundType, ConfMan.getInt("sfx_volume"));
 	_mixer->setVolumeForSoundType(Audio::Mixer::kSpeechSoundType, ConfMan.getInt("speech_volume"));
 	_mixer->setVolumeForSoundType(Audio::Mixer::kMusicSoundType, ConfMan.getInt("music_volume"));
 
 	_currSet = NULL;
 	_selectedActor = NULL;
-	_talkingActor = NULL;
 	_controlsEnabled = new bool[KEYCODE_EXTRA_LAST];
 	_controlsState = new bool[KEYCODE_EXTRA_LAST];
 	for (int i = 0; i < KEYCODE_EXTRA_LAST; i++) {
@@ -121,22 +115,22 @@ GrimEngine::GrimEngine(OSystem *syst, uint32 gameFlags, GrimGameType gameType, C
 	_textSpeed = 7;
 	_mode = _previousMode = NormalMode;
 	_flipEnable = true;
-	int speed = atol(g_registry->get("engine_speed", "30"));
+	int speed = g_registry->getInt("engine_speed");
 	if (speed <= 0 || speed > 100)
 		_speedLimitMs = 30;
 	else
 		_speedLimitMs = 1000 / speed;
 	char buf[20];
 	sprintf(buf, "%d", 1000 / _speedLimitMs);
-	g_registry->set("engine_speed", buf);
+	g_registry->setString("engine_speed", buf);
 	_refreshDrawNeeded = true;
 	_listFilesIter = NULL;
 	_savedState = NULL;
 	_fps[0] = 0;
 	_iris = new Iris();
+	_buildActiveActorsList = false;
 
-	PoolColor *c = new PoolColor(0, 0, 0);
-	new PoolColor(255, 255, 255); // Default color for actors. Id == 2
+	Color c(0, 0, 0);
 
 	_printLineDefaults.setX(0);
 	_printLineDefaults.setY(100);
@@ -173,14 +167,7 @@ GrimEngine::~GrimEngine() {
 	delete[] _controlsEnabled;
 	delete[] _controlsState;
 
-	Set::getPool().deleteObjects();
-	Actor::getPool().deleteObjects();
-	PrimitiveObject::getPool().deleteObjects();
-	TextObject::getPool().deleteObjects();
-	Bitmap::getPool().deleteObjects();
-	Font::getPool().deleteObjects();
-	ObjectState::getPool().deleteObjects();
-	PoolColor::getPool().deleteObjects();
+	clearPools();
 
 	delete LuaBase::instance();
 	if (g_registry) {
@@ -192,6 +179,8 @@ GrimEngine::~GrimEngine() {
 	g_movie = NULL;
 	delete g_imuse;
 	g_imuse = NULL;
+	delete g_sound;
+	g_sound = NULL;
 	delete g_localizer;
 	g_localizer = NULL;
 	delete g_resourceloader;
@@ -199,11 +188,35 @@ GrimEngine::~GrimEngine() {
 	delete g_driver;
 	g_driver = NULL;
 	delete _iris;
+
+	DebugMan.clearAllDebugChannels();
+}
+
+void GrimEngine::clearPools() {
+	Set::getPool().deleteObjects();
+	Actor::getPool().deleteObjects();
+	PrimitiveObject::getPool().deleteObjects();
+	TextObject::getPool().deleteObjects();
+	Bitmap::getPool().deleteObjects();
+	Font::getPool().deleteObjects();
+	ObjectState::getPool().deleteObjects();
+
+	_currSet = NULL;
 }
 
 Common::Error GrimEngine::run() {
+	// Try to see if we have the EMI Mac installer present
+	// Currently, this requires the data fork to be standalone
+	if (getGameType() == GType_MONKEY4 && SearchMan.hasFile("Monkey Island 4 Installer")) {
+		StuffItArchive *archive = new StuffItArchive();
+
+		if (archive->open("Monkey Island 4 Installer"))
+			SearchMan.add("Monkey Island 4 Installer", archive, 0, true);
+		else
+			delete archive;
+	}
+
 	g_resourceloader = new ResourceLoader();
-	g_localizer = new Localizer();
 	bool demo = getGameFlags() & ADGF_DEMO;
 	if (getGameType() == GType_GRIM)
 		g_movie = CreateSmushPlayer(demo);
@@ -214,8 +227,9 @@ Common::Error GrimEngine::run() {
 			g_movie = CreateBinkPlayer(demo);
 	}
 	g_imuse = new Imuse(20, demo);
+	g_sound = new SoundPlayer();
 
-	bool fullscreen = (tolower(g_registry->get("fullscreen", "false")[0]) == 't');
+	bool fullscreen = g_registry->getBool("fullscreen");
 
 	if (!_softRenderer && !g_system->hasFeature(OSystem::kFeatureOpenGL)){
 		warning("gfx backend doesn't support hardware rendering");
@@ -231,56 +245,67 @@ Common::Error GrimEngine::run() {
 
 	g_driver->setupScreen(640, 480, fullscreen);
 
-	// refresh the theme engine so that we can show the gui overlay without it crashing.
-	GUI::GuiManager::instance().theme()->refresh();
+	if (getGameType() == GType_MONKEY4 && SearchMan.hasFile("AMWI.m4b")) {
+		// TODO: Play EMI Mac Aspyr logo
+		warning("TODO: Play Aspyr logo");
+	}
 
 	Bitmap *splash_bm = NULL;
 	if (!(_gameFlags & ADGF_DEMO) && getGameType() == GType_GRIM)
-		splash_bm = g_resourceloader->loadBitmap("splash.bm");
+		splash_bm = Bitmap::create("splash.bm");
 	else if ((_gameFlags & ADGF_DEMO) && getGameType() == GType_MONKEY4)
-		splash_bm = g_resourceloader->loadBitmap("splash.til");
+		splash_bm = Bitmap::create("splash.til");
 	else if (getGamePlatform() == Common::kPlatformPS2 && getGameType() == GType_MONKEY4)
-		splash_bm = g_resourceloader->loadBitmap("load.tga");
+		splash_bm = Bitmap::create("load.tga");
 
 	g_driver->clearScreen();
 
 	if (splash_bm != NULL)
 		splash_bm->draw();
 
-	g_driver->flipBuffer();
+	// This flipBuffer() may make the OpenGL renderer show garbage instead of the splash,
+	// while the TinyGL renderer needs it.
+	if (_softRenderer)
+		g_driver->flipBuffer();
 
 	LuaBase *lua = NULL;
 	if (getGameType() == GType_GRIM) {
 		lua = new Lua_V1();
-
-		// FIXME/HACK: see PutActorInSet
-		const char *func = "function reset_doorman() doorman_in_hot_box = FALSE end";
-		lua_pushstring(func);
-		lua_call("dostring");
 	} else {
 		lua = new Lua_V2();
 	}
 
 	lua->registerOpcodes();
 	lua->registerLua();
+
+	lua->loadSystemScript();
+	if (!lua->supportedVersion()) {
+		const char *errorMessage = 0;
+		if (g_grim->getGameType() == GType_GRIM)
+			errorMessage = 	"Unsupported version of Grim Fandango.\n"
+							"Please download the original patch from\n"
+							"http://www.residualvm.org/downloads/\n"
+							"and put it the game data files directory.";
+		else if (g_grim->getGameType() == GType_MONKEY4)
+			errorMessage = 	"Unsupported version of Escape from Monkey Island.\n"
+							"Please download the original patch from\n"
+							"http://www.residualvm.org/downloads/\n"
+							"and put it the game data files directory.\n"
+							"Pay attention to download the correct version according to the game's language.";
+
+		GUI::displayErrorDialog(errorMessage);
+		return Common::kNoError;
+	}
+	//Make sure that the localizer is initialized after the version is checked
+	g_localizer = new Localizer();
 	lua->boot();
 
 	_savegameLoadRequest = false;
 	_savegameSaveRequest = false;
 
-
 	// Load game from specified slot, if any
 	if (ConfMan.hasKey("save_slot")) {
-		int slot = ConfMan.getInt("save_slot");
-		assert(slot >= 0);
-		char saveName[16];
-		if (slot < 100) {
-			sprintf(saveName, "grim%02d.gsv", slot);
-		} else {
-			sprintf(saveName, "grim%d.gsv", slot);
-		}
-		_savegameLoadRequest = true;
-		_savegameFileName = saveName;
+		loadGameState(ConfMan.getInt("save_slot"));
 	}
 
 	g_grim->setMode(NormalMode);
@@ -288,6 +313,13 @@ Common::Error GrimEngine::run() {
 		delete splash_bm;
 	g_grim->mainLoop();
 
+	return Common::kNoError;
+}
+
+Common::Error GrimEngine::loadGameState(int slot) {
+	assert(slot >= 0);
+	_savegameFileName = Common::String::format("grim%02d.gsv", slot);
+	_savegameLoadRequest = true;
 	return Common::kNoError;
 }
 
@@ -307,50 +339,6 @@ void GrimEngine::handleUserPaint() {
 	if (!LuaBase::instance()->callback("userPaintHandler")) {
 		error("handleUserPaint: invalid handler");
 	}
-}
-
-void GrimEngine::handleChars(int operation, int key, int /*keyModifier*/, uint16 ascii) {
-	if (!CHAR_KEY(ascii))
-		return;
-
-	char keychar[2];
-	keychar[0] = ascii;
-	keychar[1] = 0;
-
-	LuaObjects objects;
-	objects.add(keychar);
-
-	if (!LuaBase::instance()->callback("characterHandler", objects)) {
-		error("handleChars: invalid handler");
-	}
-}
-
-void GrimEngine::handleControls(int operation, int key, int /*keyModifier*/, uint16 ascii) {
-	// If we're not supposed to handle the key then don't
-	if (!_controlsEnabled[key])
-		return;
-
-	LuaObjects objects;
-	objects.add(key);
-	if (operation == Common::EVENT_KEYDOWN) {
-		objects.add(1);
-		objects.add(1);
-	} else {
-		objects.addNil();
-		objects.add(0);
-	}
-	objects.add(0);
-	if (!LuaBase::instance()->callback("buttonHandler", objects)) {
-		error("handleControls: invalid keys handler");
-	}
-// 	if (!LuaBase::instance()->callback("axisHandler", objects)) {
-// 		error("handleControls: invalid joystick handler");
-// 	}
-
-	if (operation == Common::EVENT_KEYDOWN)
-		_controlsState[key] = true;
-	else if (operation == Common::EVENT_KEYUP)
-		_controlsState[key] = false;
 }
 
 void GrimEngine::cameraChangeHandle(int prev, int next) {
@@ -387,7 +375,7 @@ void GrimEngine::handleDebugLoadResource() {
 	if (strstr(buf, ".key"))
 		resource = (void *)g_resourceloader->loadKeyframe(buf);
 	else if (strstr(buf, ".zbm") || strstr(buf, ".bm"))
-		resource = (void *)g_resourceloader->loadBitmap(buf);
+		resource = (void *)Bitmap::create(buf);
 	else if (strstr(buf, ".cmp"))
 		resource = (void *)g_resourceloader->loadColormap(buf);
 	else if (strstr(buf, ".cos"))
@@ -414,8 +402,14 @@ void GrimEngine::drawPrimitives() {
 	_iris->draw();
 
 	// Draw text
-	foreach (TextObject *t, TextObject::getPool()) {
-		t->draw();
+	if (_mode == SmushMode) {
+		if (_movieSubtitle) {
+			_movieSubtitle->draw();
+		}
+	} else {
+		foreach (TextObject *t, TextObject::getPool()) {
+			t->draw();
+		}
 	}
 }
 
@@ -424,7 +418,7 @@ void GrimEngine::playIrisAnimation(Iris::Direction dir, int x, int y, int time) 
 }
 
 void GrimEngine::luaUpdate() {
-	if (_savegameLoadRequest || _savegameSaveRequest)
+	if (_savegameLoadRequest || _savegameSaveRequest || _changeHardwareState)
 		return;
 
 	// Update timing information
@@ -443,21 +437,30 @@ void GrimEngine::luaUpdate() {
 	LuaBase::instance()->update(_frameTime, _movieTime);
 
 	if (_currSet && (_mode == NormalMode || _mode == SmushMode)) {
+		// call updateTalk() before calling update(), since it may modify costumes state, and
+		// the costumes are updated in update().
+		for (Common::List<Actor *>::iterator i = _talkingActors.begin(); i != _talkingActors.end(); ++i) {
+			Actor *a = *i;
+			if (!a->updateTalk(_frameTime)) {
+				i = _talkingActors.reverse_erase(i);
+			}
+		}
+
 		// Update the actors. Do it here so that we are sure to react asap to any change
 		// in the actors state caused by lua.
-		foreach (Actor *a, Actor::getPool()) {
+		buildActiveActorsList();
+		foreach (Actor *a, _activeActors) {
 			// Note that the actor need not be visible to update chores, for example:
 			// when Manny has just brought Meche back he is offscreen several times
 			// when he needs to perform certain chores
-			if (a->isInSet(_currSet->getName()))
-				a->update(_frameTime);
+			a->update(_frameTime);
 		}
 
 		_iris->update(_frameTime);
-	}
 
-	foreach (TextObject *t, TextObject::getPool()) {
-		t->update();
+		foreach (TextObject *t, TextObject::getPool()) {
+			t->update();
+		}
 	}
 }
 
@@ -488,11 +491,9 @@ void GrimEngine::updateDisplayScene() {
 			p->draw();
 		}
 		drawPrimitives();
-	} else if (_mode == NormalMode) {
+	} else if (_mode == NormalMode || _mode == OverworldMode) {
 		if (!_currSet)
 			return;
-
-		cameraPostChangeHandle(_currSet->getSetup());
 
 		g_driver->clearScreen();
 
@@ -540,14 +541,19 @@ void GrimEngine::updateDisplayScene() {
 
 		g_driver->set3DMode();
 
-		_currSet->setupLights();
+		if (_setupChanged) {
+			g_driver->clearCleanBuffer();
+			cameraPostChangeHandle(_currSet->getSetup());
+			_setupChanged = false;
+		}
 
 		// Draw actors
-		foreach (Actor *a, Actor::getPool()) {
-			if (a->isInSet(_currSet->getName()) && a->isVisible())
+		buildActiveActorsList();
+		foreach (Actor *a, _activeActors) {
+			if (a->isVisible())
 				a->draw();
-			a->undraw(a->isInSet(_currSet->getName()) && a->isVisible());
 		}
+
 		flagRefreshShadowMask(false);
 
 		// Draw overlying scene components
@@ -557,8 +563,6 @@ void GrimEngine::updateDisplayScene() {
 
 		drawPrimitives();
 	} else if (_mode == DrawMode) {
-		// FIXME: This should really be called only when necessary.
-		handleUserPaint();
 		_doFlip = false;
 		_prevSmushFrame = 0;
 		_movieTime = 0;
@@ -598,6 +602,9 @@ void GrimEngine::mainLoop() {
 	_refreshShadowMask = false;
 	_shortFrame = false;
 	bool resetShortFrame = false;
+	_changeHardwareState = false;
+	_changeFullscreenState = false;
+	_setupChanged = true;
 
 	for (;;) {
 		uint32 startTime = g_system->getMillis();
@@ -608,11 +615,52 @@ void GrimEngine::mainLoop() {
 			resetShortFrame = !resetShortFrame;
 		}
 
+		if (shouldQuit())
+			return;
+
 		if (_savegameLoadRequest) {
 			savegameRestore();
 		}
 		if (_savegameSaveRequest) {
 			savegameSave();
+		}
+
+		if (_changeHardwareState || _changeFullscreenState) {
+			_changeHardwareState = false;
+			bool fullscreen = g_driver->isFullscreen();
+			if (_changeFullscreenState) {
+				fullscreen = !fullscreen;
+			}
+			g_system->setFeatureState(OSystem::kFeatureFullscreenMode, fullscreen);
+			g_registry->setBool("fullscreen", fullscreen);
+
+			uint screenWidth = g_driver->getScreenWidth();
+			uint screenHeight = g_driver->getScreenHeight();
+
+			EngineMode mode = getMode();
+
+			_savegameFileName = "";
+			savegameSave();
+			clearPools();
+
+			delete g_driver;
+			if (g_registry->getBool("soft_renderer")) {
+				g_driver = CreateGfxTinyGL();
+			} else {
+				g_driver = CreateGfxOpenGL();
+			}
+
+			g_driver->setupScreen(screenWidth, screenHeight, fullscreen);
+			savegameRestore();
+
+			if (mode == DrawMode) {
+				setMode(GrimEngine::NormalMode);
+				updateDisplayScene();
+				g_driver->storeDisplay();
+				g_driver->dimScreen();
+			}
+			setMode(mode);
+			_changeFullscreenState = false;
 		}
 
 		g_imuse->flushTracks();
@@ -623,29 +671,30 @@ void GrimEngine::mainLoop() {
 		while (g_system->getEventManager()->pollEvent(event)) {
 			// Handle any buttons, keys and joystick operations
 			Common::EventType type = event.type;
-			if (type == Common::EVENT_KEYDOWN) {
-				if (_mode != DrawMode && _mode != SmushMode && (event.kbd.ascii == 'q')) {
-					handleExit();
-					break;
-				} else {
-					handleChars(type, event.kbd.keycode, event.kbd.flags, event.kbd.ascii);
-				}
-			}
 			if (type == Common::EVENT_KEYDOWN || type == Common::EVENT_KEYUP) {
-				handleControls(type, event.kbd.keycode, event.kbd.flags, event.kbd.ascii);
+				if (type == Common::EVENT_KEYDOWN) {
+					if (_mode != DrawMode && _mode != SmushMode && (event.kbd.ascii == 'q')) {
+						handleExit();
+						break;
+					} else if (_mode != DrawMode && (event.kbd.keycode == Common::KEYCODE_PAUSE)) {
+						handlePause();
+						break;
+					} else {
+						handleChars(type, event.kbd);
+					}
+				}
+
+				handleControls(type, event.kbd);
+
+				// Allow lua to react to the event.
+				// Without this lua_update switching the entries in the menu is slow because
+				// if the button is not kept pressed the KEYUP will arrive just after the KEYDOWN
+				// and it will break the lua scripts that checks for the state of the button
+				// with GetControlState()
+				luaUpdate();
 			}
-			// Check for "Hard" quit"
-			if (type == Common::EVENT_QUIT)
-				return;
 			if (type == Common::EVENT_SCREEN_CHANGED)
 				_refreshDrawNeeded = true;
-
-			// Allow lua to react to the event.
-			// Without this lua_update switching the entries in the menu is slow because
-			// if the button is not kept pressed the KEYUP will arrive just after the KEYDOWN
-			// and it will break the lua scripts that checks for the state of the button
-			// with GetControlState()
-			luaUpdate();
 		}
 
 		luaUpdate();
@@ -656,7 +705,7 @@ void GrimEngine::mainLoop() {
 		}
 
 		if (g_imuseState != -1) {
-			g_imuse->setMusicState(g_imuseState);
+			g_sound->setMusicState(g_imuseState);
 			g_imuseState = -1;
 		}
 
@@ -671,6 +720,10 @@ void GrimEngine::mainLoop() {
 			g_system->delayMillis(delayTime);
 		}
 	}
+}
+
+void GrimEngine::changeHardwareState() {
+	_changeHardwareState = true;
 }
 
 void GrimEngine::saveGame(const Common::String &file) {
@@ -693,7 +746,7 @@ void GrimEngine::savegameRestore() {
 		filename = _savegameFileName;
 	}
 	_savedState = SaveGame::openForLoading(filename);
-	if (!_savedState || _savedState->saveVersion() != SaveGame::SAVEGAME_VERSION)
+	if (!_savedState || !_savedState->isCompatible())
 		return;
 	g_imuse->stopAllSounds();
 	g_imuse->resetState();
@@ -702,12 +755,8 @@ void GrimEngine::savegameRestore() {
 	g_movie->pause(true);
 
 	_selectedActor = NULL;
-	_talkingActor = NULL;
 	delete _currSet;
 	_currSet = NULL;
-
-	PoolColor::getPool().restoreObjects(_savedState);
-	Debug::debug(Debug::Engine, "Colors restored succesfully.");
 
 	Bitmap::getPool().restoreObjects(_savedState);
 	Debug::debug(Debug::Engine, "Bitmaps restored succesfully.");
@@ -750,6 +799,12 @@ void GrimEngine::savegameRestore() {
 
 	delete _savedState;
 
+	//Re-read the values, since we may have been in some state that changed them when loading the savegame,
+	//e.g. running a cutscene, which sets the sfx volume to 0.
+	_mixer->setVolumeForSoundType(Audio::Mixer::kSFXSoundType, ConfMan.getInt("sfx_volume"));
+	_mixer->setVolumeForSoundType(Audio::Mixer::kSpeechSoundType, ConfMan.getInt("speech_volume"));
+	_mixer->setVolumeForSoundType(Audio::Mixer::kMusicSoundType, ConfMan.getInt("music_volume"));
+
 	LuaBase::instance()->postRestoreHandle();
 	g_imuse->pause(false);
 	g_movie->pause(false);
@@ -757,6 +812,8 @@ void GrimEngine::savegameRestore() {
 
 	_shortFrame = true;
 	clearEventQueue();
+	invalidateActiveActorsList();
+	buildActiveActorsList();
 }
 
 void GrimEngine::restoreGRIM() {
@@ -766,17 +823,14 @@ void GrimEngine::restoreGRIM() {
 	_previousMode = (EngineMode)_savedState->readLEUint32();
 
 	// Actor stuff
-	int32 id = _savedState->readLEUint32();
+	int32 id = _savedState->readLESint32();
 	if (id != 0) {
 		_selectedActor = Actor::getPool().getObject(id);
 	}
-	_talkingActor = Actor::getPool().getObject(_savedState->readLEUint32());
 
 	//TextObject stuff
-	//SAVECHANGE: Remove the next line with the next save version
-	_savedState->readLESint32();
-	_sayLineDefaults.setFGColor(PoolColor::getPool().getObject(_savedState->readLEUint32()));
-	_sayLineDefaults.setFont(Font::getPool().getObject(_savedState->readLEUint32()));
+	_sayLineDefaults.setFGColor(_savedState->readColor());
+	_sayLineDefaults.setFont(Font::getPool().getObject(_savedState->readLESint32()));
 	_sayLineDefaults.setHeight(_savedState->readLESint32());
 	_sayLineDefaults.setJustify(_savedState->readLESint32());
 	_sayLineDefaults.setWidth(_savedState->readLESint32());
@@ -785,7 +839,7 @@ void GrimEngine::restoreGRIM() {
 	_sayLineDefaults.setDuration(_savedState->readLESint32());
 
 	// Set stuff
-	_currSet = Set::getPool().getObject(_savedState->readLEUint32());
+	_currSet = Set::getPool().getObject(_savedState->readLESint32());
 
 	_savedState->endSection();
 }
@@ -806,7 +860,7 @@ void GrimEngine::storeSaveGameImage(SaveGame *state) {
 	if (screenshot) {
 		int size = screenshot->getWidth() * screenshot->getHeight();
 		screenshot->setActiveImage(0);
-		uint16 *data = (uint16 *)screenshot->getData();
+		uint16 *data = (uint16 *)screenshot->getData().getRawBuffer();
 		for (int l = 0; l < size; l++) {
 			state->writeLEUint16(data[l]);
 		}
@@ -840,9 +894,6 @@ void GrimEngine::savegameSave() {
 	g_movie->pause(true);
 
 	savegameCallback();
-
-	PoolColor::getPool().saveObjects(_savedState);
-	Debug::debug(Debug::Engine, "Colors saved succesfully.");
 
 	Bitmap::getPool().saveObjects(_savedState);
 	Debug::debug(Debug::Engine, "Bitmaps saved succesfully.");
@@ -900,21 +951,14 @@ void GrimEngine::saveGRIM() {
 
 	//Actor stuff
 	if (_selectedActor) {
-		_savedState->writeLEUint32(_selectedActor->getId());
+		_savedState->writeLESint32(_selectedActor->getId());
 	} else {
-		_savedState->writeLEUint32(0);
-	}
-	if (_talkingActor) {
-		_savedState->writeLEUint32(_talkingActor->getId());
-	} else {
-		_savedState->writeLEUint32(0);
+		_savedState->writeLESint32(0);
 	}
 
 	//TextObject stuff
-	//SAVECHANGE: Remove the next line with the next save version
-	_savedState->writeLESint32(0);
-	_savedState->writeLEUint32(_sayLineDefaults.getFGColor()->getId());
-	_savedState->writeLEUint32(_sayLineDefaults.getFont()->getId());
+	_savedState->writeColor(_sayLineDefaults.getFGColor());
+	_savedState->writeLESint32(_sayLineDefaults.getFont()->getId());
 	_savedState->writeLESint32(_sayLineDefaults.getHeight());
 	_savedState->writeLESint32(_sayLineDefaults.getJustify());
 	_savedState->writeLESint32(_sayLineDefaults.getWidth());
@@ -923,7 +967,7 @@ void GrimEngine::saveGRIM() {
 	_savedState->writeLESint32(_sayLineDefaults.getDuration());
 
 	//Set stuff
-	_savedState->writeLEUint32(_currSet->getId());
+	_savedState->writeLESint32(_currSet->getId());
 
 	_savedState->endSection();
 }
@@ -987,12 +1031,13 @@ void GrimEngine::setSet(Set *scene) {
 	Set *lastSet = _currSet;
 	_currSet = scene;
 	_currSet->setSoundParameters(20, 127);
-	_currSet->setLightsDirty();
 	// should delete the old scene after setting the new one
 	if (lastSet && !lastSet->_locked) {
 		delete lastSet;
 	}
 	_shortFrame = true;
+	_setupChanged = true;
+	invalidateActiveActorsList();
 }
 
 void GrimEngine::makeCurrentSetup(int num) {
@@ -1002,6 +1047,8 @@ void GrimEngine::makeCurrentSetup(int num) {
 		getCurrSet()->setSoundParameters(20, 127);
 		cameraChangeHandle(prevSetup, num);
 		// here should be set sound position
+
+		_setupChanged = true;
 	}
 }
 
@@ -1025,12 +1072,46 @@ float GrimEngine::getPerSecond(float rate) const {
 	return rate * _frameTime / 1000;
 }
 
-Actor *GrimEngine::getTalkingActor() const {
-	return _talkingActor;
+void GrimEngine::invalidateActiveActorsList() {
+	_buildActiveActorsList = true;
 }
 
-void GrimEngine::setTalkingActor(Actor *a) {
-	_talkingActor = a;
+void GrimEngine::buildActiveActorsList() {
+	if (!_buildActiveActorsList) {
+		return;
+	}
+
+	_activeActors.clear();
+	foreach (Actor *a, Actor::getPool()) {
+		if ((_mode == NormalMode && a->isInSet(_currSet->getName())) || a->isInOverworld()) {
+			_activeActors.push_back(a);
+		}
+	}
+	_buildActiveActorsList = false;
+}
+
+void GrimEngine::addTalkingActor(Actor *a) {
+	_talkingActors.push_back(a);
+}
+
+bool GrimEngine::areActorsTalking() const {
+	//This takes into account that there may be actors which are still talking, but in the background.
+	bool talking = false;
+	foreach (Actor *a, _talkingActors) {
+		if (a->isTalking()) {
+			talking = true;
+			break;
+		}
+	}
+	return talking;
+}
+
+void GrimEngine::setMovieSubtitle(TextObject *to)
+{
+	if (_movieSubtitle != to) {
+		delete _movieSubtitle;
+		_movieSubtitle = to;
+	}
 }
 
 const Common::String &GrimEngine::getSetName() const {
@@ -1045,6 +1126,12 @@ void GrimEngine::clearEventQueue() {
 	for (int i = 0; i < KEYCODE_EXTRA_LAST; ++i) {
 		_controlsState[i] = false;
 	}
+}
+
+bool GrimEngine::hasFeature(EngineFeature f) const {
+	return
+		(f == kSupportsRTL) ||
+		(f == kSupportsLoadingDuringRuntime);
 }
 
 } // end of namespace Grim

@@ -22,7 +22,6 @@
 
 #include "engines/grim/gfx_base.h"
 #include "engines/grim/savegame.h"
-#include "engines/grim/colormap.h"
 
 namespace Grim {
 
@@ -53,8 +52,8 @@ void GfxBase::saveState(SaveGame *state) {
 	state->writeByte(r),
 	state->writeByte(g),
 	state->writeByte(b),
-	state->writeLEBool(_renderBitmaps);
-	state->writeLEBool(_renderZBitmaps);
+	state->writeBool(_renderBitmaps);
+	state->writeBool(_renderZBitmaps);
 
 	state->endSection();
 }
@@ -67,8 +66,8 @@ void GfxBase::restoreState(SaveGame *state) {
 	g = state->readByte();
 	b = state->readByte();
 	setShadowColor(r, g ,b);
-	_renderBitmaps = state->readLEBool();
-	_renderZBitmaps = state->readLEBool();
+	_renderBitmaps = state->readBool();
+	_renderZBitmaps = state->readBool();
 
 	state->endSection();
 }
@@ -79,6 +78,29 @@ void GfxBase::renderBitmaps(bool render) {
 
 void GfxBase::renderZBitmaps(bool render) {
 	_renderZBitmaps = render;
+}
+
+#ifndef USE_OPENGL
+// Allow CreateGfxOpenGL to be called even if OpenGL isn't included
+GfxBase *CreateGfxOpenGL() {
+	return CreateGfxTinyGL();
+}
+#endif // USE_OPENGL
+
+void SpecialtyMaterial::select() const {
+	if (_texture) {
+		g_driver->selectMaterial(_texture);
+	}
+}
+
+void SpecialtyMaterial::create(const char *data, int width, int height) {
+	delete _texture;
+	_texture = new Texture();
+	_texture->_width = width;
+	_texture->_height = height;
+	_texture->_bpp = 4;
+	_texture->_colorFormat = BM_RGBA;
+	g_driver->createMaterial(_texture, data, NULL);
 }
 
 }

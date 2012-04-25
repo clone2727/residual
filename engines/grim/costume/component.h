@@ -43,7 +43,7 @@ public:
 	virtual void setColormap(CMap *c);
 	bool isVisible();
 	Component *getParent() { return _parent; }
-	virtual void setMatrix(Math::Matrix4) { };
+	virtual void setMatrix(const Math::Matrix4 &) { };
 	virtual void init() { }
 	virtual void setKey(int) { }
 	virtual void setMapName(char *) { }
@@ -71,6 +71,7 @@ protected:
 	void resetHierCMap();
 
 	friend class Costume;
+	friend class EMICostume;
 };
 
 } // end of namespace Grim

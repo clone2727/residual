@@ -41,6 +41,28 @@ public:
 private:
 	Myst3Engine *_vm;
 
+	typedef int32 SymbolCodeSolution[4];
+
+	struct PegCombination {
+		uint16 movie;
+		bool pegs[5];
+		uint16 pegFrames[3];
+		uint16 expireFrame;
+	};
+
+	void leversBall(int16 var);
+
+	void tesla(int16 movie, int16 var, int16 move);
+
+	void resonanceRingControl();
+	void resonanceRingsLaunchBall();
+	void resonanceRingsLights();
+
+	void pinball(int16 var);
+	const PegCombination *_pinballFindCombination(uint16 var, const PegCombination pegs[], uint16 size);
+
+	void weightDrag(uint16 var, uint16 movie);
+
 	void journalSaavedro(int16 move);
 	uint16 _journalSaavedroGetNode(uint16 chapter);
 	uint16 _journalSaavedroPageCount(uint16 chapter);
@@ -53,6 +75,20 @@ private:
 	void projectorLoadBitmap(uint16 bitmap);
 	void projectorAddSpotItem(uint16 bitmap, uint16 x, uint16 y);
 	void projectorUpdateCoordinates();
+
+	void symbolCodesInit(uint16 var, uint16 posX, uint16 posY);
+	void symbolCodesClick(int16 var);
+	bool _symbolCodesCheckSolution(uint16 var, const SymbolCodeSolution &solution);
+	int32 _symbolCodesFound();
+
+	void railRoadSwitchs();
+
+	void rollercoaster();
+
+	void settingsSave();
+
+	void _drawForVarHelper(int16 var, int32 startValue, int32 endValue);
+	void _drawXFrames(uint16 frames);
 };
 
 } /* namespace Myst3 */

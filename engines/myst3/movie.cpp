@@ -23,6 +23,9 @@
 #include "engines/myst3/movie.h"
 #include "engines/myst3/myst3.h"
 #include "engines/myst3/state.h"
+#include "engines/myst3/subtitles.h"
+
+#include "common/config-manager.h"
 
 #include "graphics/colormasks.h"
 
@@ -36,7 +39,8 @@ Movie::Movie(Myst3Engine *vm, uint16 id) :
 	_startFrame(0),
 	_endFrame(0),
 	_texture(0),
-	_force2d(false) {
+	_force2d(false),
+	_subtitles(0) {
 
 	const DirectorySubEntry *binkDesc = _vm->getFileDescription(0, id, 0, DirectorySubEntry::kMovie);
 
@@ -56,6 +60,12 @@ Movie::Movie(Myst3Engine *vm, uint16 id) :
 
 	Common::MemoryReadStream *binkStream = binkDesc->getData();
 	_bink.loadStream(binkStream, Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+
+	if (ConfMan.getBool("subtitles"))
+		_subtitles = Subtitles::create(_vm, id);
+
+	uint language = ConfMan.getInt("audio_language");
+	_bink.setAudioTrack(language);
 }
 
 void Movie::loadPosition(const VideoData &videoData) {
@@ -97,7 +107,7 @@ void Movie::draw2d() {
 	screenRect.translate(_posU, _posV);
 
 	if (_vm->_state->getViewType() != kMenu)
-		screenRect.translate(0, Scene::kTopBorderHeight);
+		screenRect.translate(0, Renderer::kTopBorderHeight);
 
 	Common::Rect textureRect = Common::Rect(_bink.getWidth(), _bink.getHeight());
 	_vm->_gfx->drawTexturedRect2D(screenRect, textureRect, _texture, 0.99f);
@@ -118,9 +128,14 @@ void Movie::draw() {
 	}
 }
 
-void Movie::drawForce2d() {
+void Movie::drawOverlay() {
 	if (_force2d)
 		draw2d();
+
+	if (_subtitles) {
+		_subtitles->setFrame(_bink.getCurFrame());
+		_subtitles->drawOverlay();
+	}
 }
 
 void Movie::drawNextFrameToTexture() {
@@ -135,6 +150,8 @@ void Movie::drawNextFrameToTexture() {
 Movie::~Movie() {
 	if (_texture)
 		_vm->_gfx->freeTexture(_texture);
+
+	delete _subtitles;
 }
 
 ScriptedMovie::ScriptedMovie(Myst3Engine *vm, uint16 id) :
@@ -160,6 +177,13 @@ void ScriptedMovie::draw() {
 		return;
 
 	Movie::draw();
+}
+
+void ScriptedMovie::drawOverlay() {
+	if (!_enabled)
+		return;
+
+	Movie::drawOverlay();
 }
 
 void ScriptedMovie::update() {
@@ -213,7 +237,7 @@ void ScriptedMovie::update() {
 	if (_enabled) {
 		if (_nextFrameReadVar) {
 			int32 nextFrame = _vm->_state->getVar(_nextFrameReadVar);
-			if (nextFrame > 0) {
+			if (nextFrame > 0 && nextFrame <= (int32)_bink.getFrameCount()) {
 				if (_bink.getCurFrame() != nextFrame - 1) {
 					_bink.seekToFrame(nextFrame - 1);
 					drawNextFrameToTexture();
@@ -268,14 +292,13 @@ SimpleMovie::SimpleMovie(Myst3Engine *vm, uint16 id) :
 	_synchronized(false) {
 	_startFrame = 1;
 	_endFrame = _bink.getFrameCount();
+	_startEngineFrame = _vm->_state->getFrameCount();
 }
 
 bool SimpleMovie::update() {
 	if (_bink.getCurFrame() < (_startFrame - 1)) {
 		_bink.seekToFrame(_startFrame - 1);
 	}
-
-	uint startEngineFrame = _vm->_state->getFrameCount();
 
 	if (!_synchronized) {
 		// Play the movie according to the bink file framerate
@@ -284,7 +307,7 @@ bool SimpleMovie::update() {
 		}
 	} else {
 		// Draw a movie frame each two engine frames
-		int targetFrame = (_vm->_state->getFrameCount() - startEngineFrame) >> 2;
+		int targetFrame = (_vm->_state->getFrameCount() - _startEngineFrame) >> 2;
 		if (_bink.getCurFrame() < targetFrame) {
 			drawNextFrameToTexture();
 		}
@@ -303,8 +326,8 @@ ProjectorMovie::ProjectorMovie(Myst3Engine *vm, uint16 id, Graphics::Surface *ba
 	_enabled = true;
 
 	for (uint i = 0; i < kBlurIterations; i++) {
-		_blurTableX[i] = sin(2 * M_PI * i / (float) kBlurIterations) * 256.0;
-		_blurTableY[i] = cos(2 * M_PI * i / (float) kBlurIterations) * 256.0;
+		_blurTableX[i] = (uint8)(sin(2 * LOCAL_PI * i / (float)kBlurIterations) * 256.0);
+		_blurTableY[i] = (uint8)(cos(2 * LOCAL_PI * i / (float)kBlurIterations) * 256.0);
 	}
 }
 
@@ -340,8 +363,8 @@ void ProjectorMovie::update() {
 		for (uint j = 0; j < _frame->w; j++) {
 			uint8 a, depth;
 			uint16 r = 0, g = 0, b = 0;
-			uint32 srcX = backgroundX + j * delta;
-			uint32 srcY = backgroundY + i * delta;
+			uint32 srcX = (uint32)(backgroundX + j * delta);
+			uint32 srcY = (uint32)(backgroundY + i * delta);
 			uint32 *src = (uint32 *)_background->getBasePtr(srcX, srcY);
 
 			// Keep the alpha channel from the previous frame

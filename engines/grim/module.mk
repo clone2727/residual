@@ -5,8 +5,6 @@ MODULE_OBJS := \
 	costume/chore.o \
 	costume/colormap_component.o \
 	costume/component.o \
-	costume/emimesh_component.o \
-	costume/emiskel_component.o \
 	costume/head.o \
 	costume/keyframe_component.o \
 	costume/lua_var_component.o \
@@ -16,6 +14,24 @@ MODULE_OBJS := \
 	costume/model_component.o \
 	costume/sound_component.o \
 	costume/sprite_component.o \
+	emi/costume/emianim_component.o \
+	emi/costume/emimesh_component.o \
+	emi/costume/emiskel_component.o \
+	emi/costume/emisprite_component.o \
+	emi/sound/aifftrack.o \
+	emi/sound/mp3track.o \
+	emi/sound/scxtrack.o \
+	emi/sound/vimatrack.o \
+	emi/sound/track.o \
+	emi/sound/emisound.o \
+	emi/sound/codecs/scx.o \
+	emi/animationemi.o \
+	emi/costumeemi.o \
+	emi/modelemi.o \
+	emi/skeleton.o \
+	emi/lua_v2.o \
+	emi/lua_v2_actor.o \
+	emi/lua_v2_sound.o \
 	imuse/imuse.o \
 	imuse/imuse_mcmp_mgr.o \
 	imuse/imuse_music.o \
@@ -55,9 +71,6 @@ MODULE_OBJS := \
 	movie/mpeg.o \
 	movie/smush.o \
 	movie/movie.o \
-	emisound/vimatrack.o \
-	emisound/track.o \
-	emisound/emisound.o \
 	update/packfile.o \
 	update/mscab.o \
 	update/lang_filter.o \
@@ -88,10 +101,8 @@ MODULE_OBJS := \
 	lua_v1_graphics.o \
 	lua_v1_sound.o \
 	lua_v1_text.o \
-	lua_v2.o \
 	material.o \
 	model.o \
-	modelemi.o \
 	objectstate.o \
 	primitives.o \
 	patchr.o \
@@ -99,13 +110,17 @@ MODULE_OBJS := \
 	resource.o \
 	savegame.o \
 	set.o \
-	scx.o \
 	sector.o \
-	skeleton.o \
 	sound.o \
+	stuffit.o \
 	textobject.o \
 	textsplit.o \
 	object.o
+
+ifdef USE_ARM_SMUSH_ASM
+MODULE_OBJS += \
+	movie/codecs/blocky8ARM.o
+endif
 
 # This module can be built as a plugin
 ifeq ($(ENABLE_GRIM), DYNAMIC_PLUGIN)

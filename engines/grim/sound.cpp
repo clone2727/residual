@@ -22,7 +22,7 @@
 
 #include "engines/grim/grim.h"
 #include "engines/grim/imuse/imuse.h"
-#include "engines/grim/emisound/emisound.h"
+#include "engines/grim/emi/sound/emisound.h"
 #include "engines/grim/sound.h"
 
 namespace Grim {
@@ -85,6 +85,20 @@ void SoundPlayer::setPan(const char *soundName, int pan) {
 	} else {
 		_emiSound->setPan(soundName, pan);
 	}
+}
+	
+void SoundPlayer::setMusicState(int stateId) {
+	if (g_grim->getGameType() == GType_GRIM) {
+		g_imuse->setMusicState(stateId);
+	} else {
+		_emiSound->setMusicState(stateId);
+	}
+}
+	
+// EMI-only
+uint32 SoundPlayer::getMsPos(int stateId) {
+	assert(_emiSound); // This shouldn't ever be called from Grim.
+	return _emiSound->getMsPos(stateId);
 }
 	
 } // end of namespace Grim

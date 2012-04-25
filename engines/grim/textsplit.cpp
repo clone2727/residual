@@ -28,35 +28,213 @@
 
 namespace Grim {
 
-// FIXME: Replace this with a proper parser (this is just too dodgy :)
-int residualvm_vsscanf(const char *str, int field_count, const char *format, va_list ap) {
-	unsigned int f01 = va_arg(ap, long);
-	unsigned int f02 = va_arg(ap, long);
-	unsigned int f03 = va_arg(ap, long);
-	unsigned int f04 = va_arg(ap, long);
-	unsigned int f05 = va_arg(ap, long);
-	unsigned int f06 = va_arg(ap, long);
-	unsigned int f07 = va_arg(ap, long);
-	unsigned int f08 = va_arg(ap, long);
-	unsigned int f09 = va_arg(ap, long);
-	unsigned int f10 = va_arg(ap, long);
-	unsigned int f11 = va_arg(ap, long);
-	unsigned int f12 = va_arg(ap, long);
-	unsigned int f13 = va_arg(ap, long);
-	unsigned int f14 = va_arg(ap, long);
-	unsigned int f15 = va_arg(ap, long);
-	unsigned int f16 = va_arg(ap, long);
-	unsigned int f17 = va_arg(ap, long);
-	unsigned int f18 = va_arg(ap, long);
-	unsigned int f19 = va_arg(ap, long);
-	unsigned int f20 = va_arg(ap, long);
-
-	if (field_count > 20)
-		error("Too many fields requested of residualvm_vsscanf (%d)", field_count);
-
-	return sscanf(str, format, f01, f02, f03, f04, f05, f06, f07, f08, f09, f10,
-			f11, f12, f13, f14, f15, f16, f17, f18, f19, f20);
+static bool isCodeSeparator(char c) {
+	return (c == ' ' || c == ',' || c == '.' || c == '%' || c == '\'' || c == ':');
 }
+
+static bool isSeparator(char c) {
+	return (c == ' ' || c == ',' || c == ':');
+}
+
+int power(int base, int exp) {
+	int res = 1;
+	for (int i = 0; i < exp; ++i) {
+		res *= base;
+	}
+	return res;
+}
+
+static float str2float(const char *str) {
+	int len = strlen(str);
+	int dotpos = len;
+	char *int_part = new char[len + 1];
+	int j = 0;
+	for (int i = 0; i < len; ++i) {
+		if (str[i] != '.') {
+			int_part[j++] = str[i];
+		} else {
+			dotpos = i;
+			break;
+		}
+	}
+	int_part[j++] = '\0';
+
+	// Must use double here. float doesn't have enough precision for the sector
+	// vertices, and the pathfinder may break, like when olivia returns from
+	// the microphone after reciting a poem.
+	double num = atoi(int_part);
+	int sign = (str[0] == '-' ? -1 : 1);
+	j = 0;
+	for (int i = dotpos + 1; i < len; ++i) {
+		double part = (double)(str[i] - 48) / (double)power(10, ++j);
+		num += part * sign;
+	}
+
+	delete[] int_part;
+
+	return num;
+}
+
+static bool isNum(char c) {
+	return (c >= '0' && c <= '9');
+}
+
+// This function is modelled after sscanf, and supports a subset of its features. See sscanf documentation
+// for information about the syntax it accepts.
+static void parse(const char *line, const char *fmt, int field_count, va_list va) {
+	char *str = strdup(line);
+	const int len = strlen(str);
+	for (int i = 0; i < len; ++i) {
+		if (str[i] == '\t')
+			str[i] = ' ';
+	}
+
+	char *format = strdup(fmt);
+	const int formatlen = strlen(format);
+	for (int i = 0; i < formatlen; ++i) {
+		if (format[i] == '\t')
+			format[i] = ' ';
+	}
+
+	int count = 0;
+	const char *src = str;
+	const char *end = str + len;
+	for (int i = 0; i < formatlen; ++i) {
+		if (format[i] == '%') {
+			char code[10];
+			char width[10];
+			int j = 0;
+			int jw = 0;
+			bool inBrackets = false;
+			while (++i < formatlen && !isCodeSeparator(format[i])) {
+				char c = format[i];
+				if (c == '[') {
+					inBrackets = true;
+				} else if (inBrackets && c == ']') {
+					inBrackets = false;
+				}
+				if (!inBrackets && isNum(c)) {
+					width[jw++] = c;
+				} else {
+					code[j++] = c;
+				}
+			}
+			code[j] = '\0';
+			width[jw] = '\0';
+
+			void *var = va_arg(va, void *);
+			if (strcmp(code, "n") == 0) {
+				*(int*)var = src - str;
+				continue;
+			}
+
+			char s[2000];
+
+			unsigned int fieldWidth = 1;
+			if (width[0] != '\0') {
+				fieldWidth = atoi(width);
+			}
+
+			j = 0;
+			if (code[0] != 'c') {
+				char nextchar = format[i];
+				if (code[0] != '[') {
+					while (src[0] == ' ') { //skip initial whitespace
+						++src;
+					}
+				}
+				while (src != end && src[0] != nextchar && !isSeparator(src[0])) {
+					s[j++] = src[0];
+					++src;
+				}
+			} else {
+				for (unsigned int n = 0; n < fieldWidth; ++n) {
+					s[j++] = src[0];
+					++src;
+				}
+			}
+			s[j] = '\0';
+			--i;
+
+			if (width[0] == '\0') {
+				fieldWidth = strlen(s);
+			}
+
+			if (strcmp(code, "d") == 0) {
+				*(int*)var = atoi(s);
+			} else if (strcmp(code, "x") == 0) {
+				*(int*)var = strtol(s, (char **) NULL, 16);
+			} else if (strcmp(code, "f") == 0) {
+				*(float*)var = str2float(s);
+			} else if (strcmp(code, "c") == 0) {
+				*(char*)var = s[0];
+			} else if (strcmp(code, "s") == 0) {
+				char *string = (char*)var;
+				strncpy(string, s, fieldWidth);
+				if (fieldWidth <= strlen(s)) {
+					// add terminating \0
+					string[fieldWidth] = '\0';
+				}
+			} else if (code[0] == '[') {
+				// This doesn't supporty hyphen (-) yet.
+				bool circumflex = code[1] == '^';
+				char *chars = new char[strlen(code)];
+
+				j = 0;
+				unsigned int k = (circumflex ? 2 : 1);
+				for (; k < strlen(code) && code[k] != ']'; ++k) {
+					assert(code[k] != '[' && code[k] != '-');
+					chars[j++] = code[k];
+				}
+				chars[j++] = '\0';
+
+				k = j = 0;
+				char *string = (char*)var;
+				for (; k < strlen(s) && k < fieldWidth; ++k) {
+					char c = s[k];
+					bool inSet = strchr(chars, c) != NULL;
+					if ((circumflex && inSet) || (!circumflex && !inSet)) {
+						break;
+					}
+
+					string[j++] = s[k];
+				}
+				string[j++] = '\0';
+				delete[] chars;
+			} else {
+				error("Code not handled: \"%s\" \"%s\"\n\"%s\" \"%s\"", code, s, line, fmt);
+			}
+
+			++count;
+			continue;
+		}
+
+		while (src[0] == ' ') {
+			++src;
+		}
+		if (src == end)
+			break;
+
+		if (src[0] != format[i] && format[i] != ' ') {
+			error("Expected line of format '%s', got '%s'", fmt, line);
+		}
+
+		if (src == end)
+			break;
+		if (format[i] != ' ') {
+			++src;
+			if (src == end)
+				break;
+		}
+	}
+	free(str);
+	free(format);
+
+	if (count < field_count) {
+		error("Expected line of format '%s', got '%s'", fmt, line);
+	}
+}
+
 
 TextSplitter::TextSplitter(Common::SeekableReadStream *data) {
 	char *line;
@@ -119,18 +297,51 @@ void TextSplitter::scanString(const char *fmt, int field_count, ...) {
 		error("Expected line of format '%s', got EOF", fmt);
 
 	va_list va;
-
 	va_start(va, field_count);
 
-#ifdef WIN32
-	if (residualvm_vsscanf(getCurrentLine(), field_count, fmt, va) < field_count)
-#else
-	if (vsscanf(getCurrentLine(), fmt, va) < field_count)
-#endif
-		error("Expected line of format '%s', got '%s'", fmt, getCurrentLine());
+	parse(getCurrentLine(), fmt, field_count, va);
+
 	va_end(va);
 
 	nextLine();
+}
+
+void TextSplitter::scanStringAtOffset(int offset, const char *fmt, int field_count, ...) {
+	if (!_currLine)
+		error("Expected line of format '%s', got EOF", fmt);
+
+	va_list va;
+	va_start(va, field_count);
+
+	parse(getCurrentLine() + offset, fmt, field_count, va);
+
+	va_end(va);
+
+	nextLine();
+}
+
+void TextSplitter::scanStringNoNewLine(const char *fmt, int field_count, ...) {
+	if (!_currLine)
+		error("Expected line of format '%s', got EOF", fmt);
+
+	va_list va;
+	va_start(va, field_count);
+
+	parse(getCurrentLine(), fmt, field_count, va);
+
+	va_end(va);
+}
+
+void TextSplitter::scanStringAtOffsetNoNewLine(int offset, const char *fmt, int field_count, ...) {
+	if (!_currLine)
+		error("Expected line of format '%s', got EOF", fmt);
+
+	va_list va;
+	va_start(va, field_count);
+
+	parse(getCurrentLine() + offset, fmt, field_count, va);
+
+	va_end(va);
 }
 
 void TextSplitter::processLine() {
@@ -146,7 +357,7 @@ void TextSplitter::processLine() {
 
 	// Cut off trailing whitespace (including '\r')
 	char *strend = strchr(_currLine, '\0');
-	while (strend > _currLine && isspace(strend[-1]))
+	while (strend > _currLine && Common::isSpace(strend[-1]))
 		strend--;
 	*strend = '\0';
 

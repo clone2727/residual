@@ -27,7 +27,6 @@
 #include "engines/grim/sector.h"
 #include "engines/grim/textsplit.h"
 #include "engines/grim/savegame.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/set.h"
 
 namespace Grim {
@@ -47,7 +46,7 @@ void Sector::saveState(SaveGame *savedState) const {
 	savedState->writeLESint32(_numVertices);
 	savedState->writeLESint32(_id);
 	savedState->writeLESint32(_type);
-	savedState->writeLESint32(_visible);
+	savedState->writeBool(_visible);
 	savedState->writeFloat(_height);
 
 	savedState->writeString(_name);
@@ -59,7 +58,7 @@ void Sector::saveState(SaveGame *savedState) const {
 	savedState->writeVector3d(_normal);
 
 	savedState->writeFloat(_shrinkRadius);
-	savedState->writeLESint32(_invalid);
+	savedState->writeBool(_invalid);
 	if (_shrinkRadius != 0.f && !_invalid) {
 		for (int i = 0; i < _numVertices + 1; ++i) {
 			savedState->writeVector3d(_origVertices[i]);
@@ -71,7 +70,7 @@ bool Sector::restoreState(SaveGame *savedState) {
 	_numVertices = savedState->readLESint32();
 	_id          = savedState->readLESint32();
 	_type        = (SectorType)savedState->readLESint32();
-	_visible     = savedState->readLESint32();
+	_visible     = savedState->readBool();
 	_height      = savedState->readFloat();
 
 	_name 		 = savedState->readString();
@@ -84,7 +83,7 @@ bool Sector::restoreState(SaveGame *savedState) {
 	_normal = savedState->readVector3d();
 
 	_shrinkRadius = savedState->readFloat();
-	_invalid = savedState->readLESint32();
+	_invalid = savedState->readBool();
 	if (_shrinkRadius != 0.f && !_invalid) {
 		_origVertices = new Math::Vector3d[_numVertices + 1];
 		for (int i = 0; i < _numVertices + 1; ++i) {
@@ -157,15 +156,25 @@ void Sector::load(TextSplitter &ts) {
 
 void Sector::loadBinary(Common::SeekableReadStream *data) {
 	_numVertices = data->readUint32LE();
-	_vertices = new Math::Vector3d[_numVertices];
+	_vertices = new Math::Vector3d[_numVertices + 1];
 	for(int i = 0; i < _numVertices; i++) {
 		data->read(_vertices[i].getData(), 12);
 	}
 
+	// Repeat the last vertex for convenience
+	_vertices[_numVertices] = _vertices[0];
+
+	_normal = Math::Vector3d::crossProduct(_vertices[1] - _vertices[0],
+	                                       _vertices[_numVertices - 1] - _vertices[0]);
+	float length = _normal.getMagnitude();
+	if (length > 0)
+		_normal /= length;
+
 	char name[128];
 	int nameLength = data->readUint32LE();
 
-	_name = data->read(name, nameLength);
+	data->read(name, nameLength);
+	_name = name;
 
 	_id = data->readUint32LE();
 
@@ -288,7 +297,8 @@ bool Sector::isPointInSector(const Math::Vector3d &point) const {
 	for (int i = 0; i < _numVertices; i++) {
 		Math::Vector3d edge = _vertices[i + 1] - _vertices[i];
 		Math::Vector3d delta = point - _vertices[i];
-		if (edge.x() * delta.y() < edge.y() * delta.x())
+		Math::Vector3d cross = Math::Vector3d::crossProduct(edge, delta);
+		if (cross.dotProduct(_normal) < 0)
 			return false;
 	}
 	return true;
@@ -321,19 +331,23 @@ Common::List<Math::Line3d> Sector::getBridgesTo(Sector *sector) const {
 			edge = line.end() - line.begin();
 			delta_b1 = bridge.begin() - line.begin();
 			delta_b2 = bridge.end() - line.begin();
-			bool b1_out = edge.x() * delta_b1.y() < edge.y() * delta_b1.x();
-			bool b2_out = edge.x() * delta_b2.y() < edge.y() * delta_b2.x();
+			Math::Vector3d cross_b1 = Math::Vector3d::crossProduct(edge, delta_b1);
+			Math::Vector3d cross_b2 = Math::Vector3d::crossProduct(edge, delta_b2);
+			bool b1_out = cross_b1.dotProduct(_normal) < 0;
+			bool b2_out = cross_b2.dotProduct(_normal) < 0;
+
+			bool useXZ = (g_grim->getGameType() == GType_MONKEY4);
 
 			if (b1_out && b2_out) {
 				// Both points are outside.
 				it = bridges.erase(it);
 				continue;
 			} else if (b1_out) {
-				if (bridge.intersectLine2d(line, &pos)) {
+				if (bridge.intersectLine2d(line, &pos, useXZ)) {
 					bridge = Math::Line3d(pos, bridge.end());
 				}
 			} else if (b2_out) {
-				if (bridge.intersectLine2d(line, &pos)) {
+				if (bridge.intersectLine2d(line, &pos, useXZ)) {
 					bridge = Math::Line3d(bridge.begin(), pos);
 				}
 			}
@@ -348,10 +362,18 @@ Common::List<Math::Line3d> Sector::getBridgesTo(Sector *sector) const {
 
 	// All the bridges should be at the same height on both sectors.
 	while (it != bridges.end()) {
-		if (fabs(getProjectionToPlane((*it).begin()).z() - sector->getProjectionToPlane((*it).begin()).z()) > 0.01f ||
-			fabs(getProjectionToPlane((*it).end()).z() - sector->getProjectionToPlane((*it).end()).z()) > 0.01f) {
-			it = bridges.erase(it);
-			continue;
+		if (g_grim->getGameType() == GType_MONKEY4) {
+			if (fabs(getProjectionToPlane((*it).begin()).y() - sector->getProjectionToPlane((*it).begin()).y()) > 0.01f ||
+				fabs(getProjectionToPlane((*it).end()).y() - sector->getProjectionToPlane((*it).end()).y()) > 0.01f) {
+				it = bridges.erase(it);
+				continue;
+			}
+		} else {
+			if (fabs(getProjectionToPlane((*it).begin()).z() - sector->getProjectionToPlane((*it).begin()).z()) > 0.01f ||
+				fabs(getProjectionToPlane((*it).end()).z() - sector->getProjectionToPlane((*it).end()).z()) > 0.01f) {
+				it = bridges.erase(it);
+				continue;
+			}
 		}
 		++it;
 	}
@@ -359,29 +381,28 @@ Common::List<Math::Line3d> Sector::getBridgesTo(Sector *sector) const {
 }
 
 Math::Vector3d Sector::getProjectionToPlane(const Math::Vector3d &point) const {
-	if (_normal.z() == 0)
-		error("Trying to walk along vertical plane");
+	if (_normal.getMagnitude() == 0)
+		error("Sector normal is (0,0,0)");
 
-	// Formula: return p - (n . (p - v_0))/(n . k) k
+	// Formula: return p - n * (n . (p - v_0))
 	Math::Vector3d result = point;
-	result.z() -= Math::Vector3d::dotProduct(_normal, point - _vertices[0]) / _normal.z();
+	result -= _normal * _normal.dotProduct(point - _vertices[0]);
 	return result;
 }
 
 Math::Vector3d Sector::getProjectionToPuckVector(const Math::Vector3d &v) const {
-	if (_normal.z() == 0)
-		error("Trying to walk along vertical plane");
+	if (_normal.getMagnitude() == 0)
+		error("Sector normal is (0,0,0)");
 
 	Math::Vector3d result = v;
-	result.z() -= Math::Vector3d::dotProduct(_normal, v) / _normal.z();
+	result -= _normal * _normal.dotProduct(v);
 	return result;
 }
 
 // Find the closest point on the walkplane to the given point
 Math::Vector3d Sector::getClosestPoint(const Math::Vector3d &point) const {
 	// First try to project to the plane
-	Math::Vector3d p2 = point;
-	p2 -= (Math::Vector3d::dotProduct(_normal, p2 - _vertices[0])) * _normal;
+	Math::Vector3d p2 = getProjectionToPlane(point);
 	if (isPointInSector(p2))
 		return p2;
 
@@ -390,7 +411,8 @@ Math::Vector3d Sector::getClosestPoint(const Math::Vector3d &point) const {
 		Math::Vector3d edge = _vertices[i + 1] - _vertices[i];
 		Math::Vector3d delta = point - _vertices[i];
 		float scalar = Math::Vector3d::dotProduct(delta, edge) / Math::Vector3d::dotProduct(edge, edge);
-		if (scalar >= 0 && scalar <= 1 && delta.x() * edge.y() > delta.y() * edge.x())
+		Math::Vector3d cross = Math::Vector3d::crossProduct(delta, edge);
+		if (scalar >= 0 && scalar <= 1 && cross.dotProduct(_normal) > 0)
 			// That last test is just whether the z-component
 			// of delta cross edge is positive; we don't
 			// want to return opposite edges.
@@ -423,7 +445,8 @@ void Sector::getExitInfo(const Math::Vector3d &s, const Math::Vector3d &dirVec, 
 	int i;
 	for (i = 0; i < _numVertices; i++) {
 		Math::Vector3d delta = _vertices[i] - start;
-		if (delta.x() * dir.y() > delta.y() * dir.x())
+		Math::Vector3d cross = Math::Vector3d::crossProduct(delta, dir);
+		if (cross.dotProduct(_normal) > 0)
 			break;
 	}
 
@@ -432,7 +455,8 @@ void Sector::getExitInfo(const Math::Vector3d &s, const Math::Vector3d &dirVec, 
 	while (i < _numVertices) {
 		i++;
 		Math::Vector3d delta = _vertices[i] - start;
-		if (delta.x() * dir.y() <= delta.y() * dir.x())
+		Math::Vector3d cross = Math::Vector3d::crossProduct(delta, dir);
+		if (cross.dotProduct(_normal) <= 0)
 			break;
 	}
 
@@ -440,7 +464,7 @@ void Sector::getExitInfo(const Math::Vector3d &s, const Math::Vector3d &dirVec, 
 	result->angleWithEdge = Math::Vector3d::angle(dir, result->edgeDir);
 	result->edgeVertex = i - 1;
 
-	Math::Vector3d edgeNormal(result->edgeDir.y(), -result->edgeDir.x(), 0);
+	Math::Vector3d edgeNormal = Math::Vector3d::crossProduct(result->edgeDir, _normal);
 	float d = Math::Vector3d::dotProduct(dir, edgeNormal);
 	// This is 0 for the albinizod monster in the at set
 	if (!d)

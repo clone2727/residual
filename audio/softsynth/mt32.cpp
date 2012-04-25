@@ -44,7 +44,7 @@
 #include "graphics/fontman.h"
 #include "graphics/surface.h"
 #include "graphics/pixelformat.h"
-//#include "graphics/palette.h"
+#include "graphics/palette.h"
 #include "graphics/font.h"
 
 class MidiChannel_MT32 : public MidiChannel_MPU401 {
@@ -84,42 +84,6 @@ public:
 	int getRate() const { return _outputRate; }
 };
 
-class MT32File : public MT32Emu::File {
-	Common::File _in;
-	Common::DumpFile _out;
-public:
-	bool open(const char *filename, OpenMode mode) {
-		if (mode == OpenMode_read)
-			return _in.open(filename);
-		else
-			return _out.open(filename);
-	}
-	void close() {
-		_in.close();
-		_out.close();
-	}
-	size_t read(void *in, size_t size) {
-		return _in.read(in, size);
-	}
-	bool readBit8u(MT32Emu::Bit8u *in) {
-		byte b = _in.readByte();
-		if (_in.eos())
-			return false;
-		*in = b;
-		return true;
-	}
-	size_t write(const void *in, size_t size) {
-		return _out.write(in, size);
-	}
-	bool writeBit8u(MT32Emu::Bit8u out) {
-		_out.writeByte(out);
-		return !_out.err();
-	}
-	bool isEOF() {
-		return _in.isOpen() && _in.eos();
-	}
-};
-
 static int eatSystemEvents() {
 	Common::Event event;
 	Common::EventManager *eventMan = g_system->getEventManager();
@@ -135,8 +99,8 @@ static int eatSystemEvents() {
 }
 
 static void drawProgress(float progress) {
-	// TODO implement in ResidualVM
-	/*const Graphics::Font &font(*FontMan.getFontByUsage(Graphics::FontManager::kOSDFont));
+	return; // TODO implement in ResidualVM
+	const Graphics::Font &font(*FontMan.getFontByUsage(Graphics::FontManager::kGUIFont));
 	Graphics::Surface *screen = g_system->lockScreen();
 
 	assert(screen);
@@ -172,12 +136,11 @@ static void drawProgress(float progress) {
 
 	g_system->unlockScreen();
 	g_system->updateScreen();
-	*/
 }
 
 static void drawMessage(int offset, const Common::String &text) {
-	// TODO implement in ResidualVM
-	/* const Graphics::Font &font(*FontMan.getFontByUsage(Graphics::FontManager::kOSDFont));
+	return; // TODO implement in ResidualVM
+	const Graphics::Font &font(*FontMan.getFontByUsage(Graphics::FontManager::kGUIFont));
 	Graphics::Surface *screen = g_system->lockScreen();
 
 	assert(screen);
@@ -207,12 +170,11 @@ static void drawMessage(int offset, const Common::String &text) {
 
 	g_system->unlockScreen();
 	g_system->updateScreen();
-	*/
 }
 
-static MT32Emu::File *MT32_OpenFile(void *userData, const char *filename, MT32Emu::File::OpenMode mode) {
-	MT32File *file = new MT32File();
-	if (!file->open(filename, mode)) {
+static Common::File *MT32_OpenFile(void *userData, const char *filename) {
+	Common::File *file = new Common::File();
+	if (!file->open(filename)) {
 		delete file;
 		return NULL;
 	}
@@ -317,8 +279,7 @@ int MidiDriver_MT32::open() {
 
 	_synth = new MT32Emu::Synth();
 
-	// TODO implement in ResidualVM
-	Graphics::PixelFormat screenFormat; /*= g_system->getScreenFormat();*/
+	Graphics::PixelFormat screenFormat = g_system->getScreenFormat();
 
 	if (screenFormat.bytesPerPixel == 1) {
 		const byte dummy_palette[] = {
@@ -327,23 +288,26 @@ int MidiDriver_MT32::open() {
 			171, 0, 0	// fill
 		};
 
-		// TODO implement in ResidualVM
-		//g_system->setPalette(dummy_palette, 0, 3);
+		g_system->getPaletteManager()->setPalette(dummy_palette, 0, 3);
 	}
 
 	_initializing = true;
 	drawMessage(-1, _s("Initializing MT-32 Emulator"));
 	if (!_synth->open(prop))
 		return MERR_DEVICE_NOT_AVAILABLE;
+
+	double gain = (double)ConfMan.getInt("midi_gain") / 100.0;
+	_synth->setOutputGain(1.0f * gain);
+	_synth->setReverbOutputGain(0.68f * gain);
+
 	_initializing = false;
 
-	// TODO implement in ResidualVM
-/*	if (screenFormat.bytesPerPixel > 1)
+	if (screenFormat.bytesPerPixel > 1)
 		g_system->fillScreen(screenFormat.RGBToColor(0, 0, 0));
 	else
 		g_system->fillScreen(0);
 
-	g_system->updateScreen();*/
+	g_system->updateScreen();
 
 	_mixer->playStream(Audio::Mixer::kSFXSoundType, &_mixerSoundHandle, this, -1, Audio::Mixer::kMaxChannelVolume, 0, DisposeAfterUse::NO, true);
 

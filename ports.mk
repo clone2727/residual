@@ -16,8 +16,7 @@ install:
 	$(INSTALL) -d "$(DESTDIR)$(docdir)"
 	$(INSTALL) -c -m 644 $(DIST_FILES_DOCS) "$(DESTDIR)$(docdir)"
 	$(INSTALL) -d "$(DESTDIR)$(datadir)"
-	$(INSTALL) -c -m 644 $(DIST_FILES_THEMES) "$(DESTDIR)$(datadir)/"
-	$(INSTALL) -c -m 644 $(DIST_FILES_ENGINEDATA) "$(DESTDIR)$(datadir)/"
+	$(INSTALL) -c -m 644 $(DIST_FILES_THEMES) $(DIST_FILES_ENGINEDATA) "$(DESTDIR)$(datadir)/"
 ifdef DYNAMIC_MODULES
 	$(INSTALL) -d "$(DESTDIR)$(libdir)/residualvm/"
 	$(INSTALL) -c -s -m 644 $(PLUGINS) "$(DESTDIR)$(libdir)/residualvm/"
@@ -82,7 +81,10 @@ endif
 # Location of static libs for the iPhone
 ifneq ($(BACKEND), iphone)
 # Static libaries, used for the residualvm-static and iphone targets
-OSX_STATIC_LIBS := `$(SDLCONFIG) --static-libs`
+OSX_STATIC_LIBS := `$(STATICLIBPATH)/bin/sdl-config --static-libs`
+ifdef USE_FREETYPE2
+OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libfreetype.a $(STATICLIBPATH)/lib/libbz2.a
+endif
 endif
 
 ifdef USE_VORBIS
@@ -122,7 +124,7 @@ OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libfaad.a
 endif
 
 ifdef USE_ZLIB
-OSX_ZLIB ?= -lz
+OSX_ZLIB ?= $(STATICLIBPATH)/lib/libz.a
 endif
 
 ifdef USE_SPARKLE
@@ -156,19 +158,22 @@ iphone: $(OBJS)
 # TODO: Replace AUTHORS by Credits.rtf
 osxsnap: bundle
 	mkdir ResidualVM-snapshot
-	$(srcdir)/devtools/credits.pl --text > $(srcdir)/AUTHORS
 	cp $(srcdir)/AUTHORS ./ResidualVM-snapshot/Authors
 	cp $(srcdir)/COPYING ./ResidualVM-snapshot/License\ \(GPL\)
+	cp $(srcdir)/COPYING.BSD ./ResidualVM-snapshot/License\ \(BSD\)
 	cp $(srcdir)/COPYING.LGPL ./ResidualVM-snapshot/License\ \(LGPL\)
+	cp $(srcdir)/COPYING.FREEFONT ./ResidualVM-snapshot/License\ \(FREEFONT\)
 	cp $(srcdir)/COPYRIGHT ./ResidualVM-snapshot/Copyright\ Holders
 	cp $(srcdir)/NEWS ./ResidualVM-snapshot/News
 	cp $(srcdir)/README ./ResidualVM-snapshot/Residual\ ReadMe
-	/Developer/Tools/SetFile -t ttro -c ttxt ./ResidualVM-snapshot/*
-	/Developer/Tools/CpMac -r $(bundle_name) ./ResidualVM-snapshot/
+	mkdir ResidualVM-snapshot/doc
+	cp $(srcdir)/doc/QuickStart ./ResidualVM-snapshot/doc/QuickStart
+	SetFile -t ttro -c ttxt ./ResidualVM-snapshot/*
+	CpMac -r $(bundle_name) ./ResidualVM-snapshot/
 	#cp $(srcdir)/dists/macosx/DS_Store ./ResidualVM-snapshot/.DS_Store
 	#cp $(srcdir)/dists/macosx/background.jpg ./ResidualVM-snapshot/background.jpg
-	#/Developer/Tools/SetFile -a V ./ResidualVM-snapshot/.DS_Store
-	#/Developer/Tools/SetFile -a V ./ResidualVM-snapshot/background.jpg
+	#SetFile -a V ./ResidualVM-snapshot/.DS_Store
+	#SetFile -a V ./ResidualVM-snapshot/background.jpg
 	hdiutil create -ov -format UDZO -imagekey zlib-level=9 -fs HFS+ \
 					-srcfolder ResidualVM-snapshot \
 					-volname "ResidualVM" \
@@ -182,10 +187,11 @@ osxsnap: bundle
 residualvmwinres.o: $(srcdir)/icons/residualvm.ico $(DIST_FILES_THEMES) $(DIST_FILES_ENGINEDATA) $(srcdir)/dists/residualvm.rc
 	$(QUIET_WINDRES)$(WINDRES) -DHAVE_CONFIG_H $(WINDRESFLAGS) $(DEFINES) -I. -I$(srcdir) $(srcdir)/dists/residualvm.rc residualvmwinres.o
 
-# Special target to create a win32 snapshot binary
+# Special target to create a win32 snapshot binary (for Inno Setup)
 win32dist: $(EXECUTABLE)
 	mkdir -p $(WIN32PATH)
 	mkdir -p $(WIN32PATH)/graphics
+	mkdir -p $(WIN32PATH)/doc
 	$(STRIP) $(EXECUTABLE) -o $(WIN32PATH)/$(EXECUTABLE)
 	cp $(DIST_FILES_THEMES) $(WIN32PATH)
 ifdef DIST_FILES_ENGINEDATA
@@ -193,15 +199,19 @@ ifdef DIST_FILES_ENGINEDATA
 endif
 	cp $(srcdir)/AUTHORS $(WIN32PATH)/AUTHORS.txt
 	cp $(srcdir)/COPYING $(WIN32PATH)/COPYING.txt
+	cp $(srcdir)/COPYING.BSD $(WIN32PATH)/COPYING.BSD.txt
 	cp $(srcdir)/COPYING.LGPL $(WIN32PATH)/COPYING.LGPL.txt
+	cp $(srcdir)/COPYING.FREEFONT $(WIN32PATH)/COPYING.FREEFONT.txt
 	cp $(srcdir)/COPYRIGHT $(WIN32PATH)/COPYRIGHT.txt
 	cp $(srcdir)/NEWS $(WIN32PATH)/NEWS.txt
+	cp $(srcdir)/doc/QuickStart $(WIN32PATH)/doc/QuickStart.txt
 	cp $(srcdir)/README $(WIN32PATH)/README.txt
 	cp /usr/local/README-SDL.txt $(WIN32PATH)
 	cp /usr/local/bin/SDL.dll $(WIN32PATH)
 	cp $(srcdir)/icons/residualvm.ico $(WIN32PATH)
-	cp $(srcdir)/dists/win32/residualvm.iss $(WIN32PATH)
+	cp $(srcdir)/dists/win32/ResidualVM.iss $(WIN32PATH)
 	unix2dos $(WIN32PATH)/*.txt
+#	unix2dos $(WIN32PATH)/doc/*.txt
 # Special target to create a win32 NSIS installer
 win32setup: $(EXECUTABLE)
 	mkdir -p $(srcdir)/$(STAGINGPATH)
@@ -244,6 +254,7 @@ endif
 # Special target to create a win32 snapshot binary under Debian Linux using cross mingw32 toolchain
 crosswin32dist: $(EXECUTABLE)
 	mkdir -p ResidualVMWin32
+	mkdir -p ResidualVMWin32/doc
 	$(STRIP) $(EXECUTABLE) -o ResidualVMWin32/$(EXECUTABLE)
 	cp $(DIST_FILES_THEMES) ResidualVMWin32
 ifdef DIST_FILES_ENGINEDATA
@@ -251,15 +262,18 @@ ifdef DIST_FILES_ENGINEDATA
 endif
 	cp $(srcdir)/AUTHORS ResidualVMWin32/AUTHORS.txt
 	cp $(srcdir)/COPYING ResidualVMWin32/COPYING.txt
+	cp $(srcdir)/COPYING.BSD ResidualVMWin32/COPYING.BSD.txt
 	cp $(srcdir)/COPYING.LGPL ResidualVMWin32/COPYING.LGPL.txt
+	cp $(srcdir)/COPYING.FREEFONT ResidualVMWin32/COPYING.FREEFONT.txt
 	cp $(srcdir)/COPYRIGHT ResidualVMWin32/COPYRIGHT.txt
 	cp $(srcdir)/NEWS ResidualVMWin32/NEWS.txt
+	cp $(srcdir)/doc/QuickStart ResidualVMWin32/doc/QuickStart.txt
 	cp $(srcdir)/README ResidualVMWin32/README.txt
-	cp $(srcdir)/dists/win32/residualvm.iss ResidualVMWin32
+	cp $(srcdir)/dists/win32/ResidualVM.iss ResidualVMWin32
 	cp /usr/i586-mingw32msvc/README-SDL.txt ResidualVMWin32
 	cp /usr/i586-mingw32msvc/bin/SDL.dll ResidualVMWin32
 	toms ResidualVMWin32/*.txt
-	toms ResidualVMWin32/residualvm.iss
+	toms ResidualVMWin32/ResidualVM.iss
 
 #
 # AmigaOS specific
@@ -276,6 +290,26 @@ ifdef DIST_FILES_ENGINEDATA
 endif
 	cp $(DIST_FILES_DOCS) $(AOS4PATH)
 
+# Special target to cross create an AmigaOS snapshot installation
+aos4dist-cross: $(EXECUTABLE)
+	mkdir -p ResidualVM
+	$(STRIP) $(EXECUTABLE) -o ResidualVM/ResidualVM
+	cp icons/residualvm.info ResidualVM/ResidualVM.info
+	cp $(DIST_FILES_THEMES) ResidualVM
+ifdef DIST_FILES_ENGINEDATA
+	cp $(DIST_FILES_ENGINEDATA) ResidualVM
+endif
+	cp $(srcdir)/AUTHORS ResidualVM/AUTHORS.txt
+	cp $(srcdir)/COPYING ResidualVM/COPYING.txt
+	cp $(srcdir)/COPYING.BSD ResidualVM/COPYING.BSD.txt
+	cp $(srcdir)/COPYING.LGPL ResidualVM/COPYING.LGPL.txt
+	cp $(srcdir)/COPYING.FREEFONT ResidualVM/COPYING.FREEFONT.txt
+	cp $(srcdir)/COPYRIGHT ResidualVM/COPYRIGHT.txt
+	cp $(srcdir)/NEWS ResidualVM/NEWS.txt
+	cp $(srcdir)/doc/QuickStart ResidualVM/QuickStart.txt
+	cp $(srcdir)/README ResidualVM/README.txt
+	lha a residualvm-amigaos4.lha ResidualVM
+
 #
 # PlayStation 3 specific
 #
@@ -285,7 +319,7 @@ ps3pkg: $(EXECUTABLE)
 	mkdir -p ps3pkg/USRDIR/data/
 	mkdir -p ps3pkg/USRDIR/doc/
 	mkdir -p ps3pkg/USRDIR/saves/
-	make_self_npdrm "$(EXECUTABLE)" ps3pkg/USRDIR/EBOOT.BIN UP0001-SCUM12000_00-0000000000000000
+	make_self_npdrm "$(EXECUTABLE)" ps3pkg/USRDIR/EBOOT.BIN UP0001-RESI12000_00-0000000000000000
 	cp $(DIST_FILES_THEMES) ps3pkg/USRDIR/data/
 ifdef DIST_FILES_ENGINEDATA
 	cp $(DIST_FILES_ENGINEDATA) ps3pkg/USRDIR/data/
@@ -296,8 +330,8 @@ endif
 	cp $(srcdir)/dists/ps3/ICON0.PNG ps3pkg/
 	cp $(srcdir)/dists/ps3/PIC1.PNG ps3pkg/
 	sfo.py -f $(srcdir)/dists/ps3/sfo.xml ps3pkg/PARAM.SFO
-	pkg.py --contentid UP0001-SCUM12000_00-0000000000000000 ps3pkg/ residualvm-ps3.pkg
-	package_finalize residual-ps3.pkg
+	pkg.py --contentid UP0001-RESI12000_00-0000000000000000 ps3pkg/ residualvm-ps3.pkg
+	package_finalize residualvm-ps3.pkg
 
 ps3run: $(EXECUTABLE)
 	$(STRIP) $(EXECUTABLE)

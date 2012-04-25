@@ -39,6 +39,23 @@ struct Surface;
 
 namespace Myst3 {
 
+enum GameVersionFlags {
+	kFlagNone      = 0,
+	kFlagVersion10 = (1 << 0), // v1.0
+	kFlagSafeDisc  = (1 << 1), // SafeDisc-encrypted
+	kFlagDVD       = (1 << 2)  // DVD version
+};
+
+struct ExecutableVersion {
+	const char *description;
+	int flags;
+	const char *executable;
+	uint32 baseOffset;
+	uint32 ageTableOffset;
+	uint32 nodeInitScriptOffset;
+	uint32 soundNamesOffset;
+};
+
 // Engine Debug Flags
 enum {
 	kDebugVariable = (1 << 0),
@@ -83,47 +100,73 @@ public:
 	// Used by the projectors on J'nanin, see puzzle #14
 	Graphics::Surface *_projectorBackground;
 
-	Myst3Engine(OSystem *syst, const Myst3GameDescription *gameDesc);
+	Myst3Engine(OSystem *syst, const Myst3GameDescription *version);
 	virtual ~Myst3Engine();
 
+	bool hasFeature(EngineFeature f) const;
 	Common::Platform getPlatform() const;
+	Common::Language getDefaultLanguage() const;
+	const ExecutableVersion *getExecutableVersion() const;
 
+	bool canLoadGameStateCurrently();
 	Common::Error loadGameState(int slot);
 
-	const DirectorySubEntry *getFileDescription(const char* room, uint16 index, uint16 face, DirectorySubEntry::ResourceType type);
+	const DirectorySubEntry *getFileDescription(const char* room, uint32 index, uint16 face, DirectorySubEntry::ResourceType type);
 	Graphics::Surface *loadTexture(uint16 id);
 
 	void goToNode(uint16 nodeID, uint transition);
 	void loadNode(uint16 nodeID, uint32 roomID = 0, uint32 ageID = 0);
+	void unloadNode();
 	void loadNodeCubeFaces(uint16 nodeID);
 	void loadNodeFrame(uint16 nodeID);
 	void loadNodeMenu(uint16 nodeID);
+
+	void dragItem(uint16 statusVar, uint16 movie, uint16 frame, uint16 hoverFrame, uint16 itemVar);
+	void dragSymbol(uint16 var, uint16 id);
 	int16 openDialog(uint16 id);
 
 	void runNodeInitScripts();
 	void runNodeBackgroundScripts();
 	void runScriptsFromNode(uint16 nodeID, uint32 roomID = 0, uint32 ageID = 0);
+	void runBackgroundSoundScriptsFromNode(uint16 nodeID, uint32 roomID = 0, uint32 ageID = 0);
 
 	void loadMovie(uint16 id, uint16 condition, bool resetCond, bool loop);
-	void playSimpleMovie(uint16 id);
+	void playMovieGoToNode(uint16 movie, uint16 node);
+	void playMovieFullFrame(uint16 movie);
+	void playSimpleMovie(uint16 id, bool fullframe = false);
 	void removeMovie(uint16 id);
 	void setMovieLooping(uint16 id, bool loop);
 
 	void addSpotItem(uint16 id, uint16 condition, bool fade);
 	void addMenuSpotItem(uint16 id, uint16 condition, const Common::Rect &rect);
+	void loadNodeSubtitles(uint32 id);
+
 	void addSunSpot(uint16 pitch, uint16 heading, uint16 intensity,
 			uint16 color, uint16 var, bool varControlledIntensity, uint16 radius);
+	SunSpot computeSunspotsIntensity(float pitch, float heading);
 
 	void setMenuAction(uint16 action) { _menuAction = action; }
-	void setShouldQuit() { _shouldQuit = true; }
+
+	void animateDirectionChange(float pitch, float heading, uint16 speed);
+	void getMovieLookAt(uint16 id, bool start, float &pitch, float &heading);
 
 	void processInput(bool lookOnly);
 	void drawFrame();
+
+	bool inputValidatePressed();
+	bool inputEscapePressed();
+	bool inputSpacePressed();
+	bool inputTilePressed();
+
+	void settingsInitDefaults();
+	void settingsLoadToVars();
+	void settingsApplyFromVars();
 private:
 	const Myst3GameDescription *_gameDesc;
 
 	OSystem *_system;
 	Console *_console;
+	const Myst3GameDescription *_gameDescription;
 	
 	Node *_node;
 
@@ -133,15 +176,24 @@ private:
 	Script *_scriptEngine;
 
 	Common::Array<ScriptedMovie *> _movies;
+	Common::Array<SunSpot *> _sunspots;
 	Common::Array<Drawable *> _drawables;
 
-	bool _shouldQuit;
 	uint16 _menuAction;
 
-	Common::Array<HotSpot *> listHoveredHotspots(NodePtr nodeData);
+	bool _inputSpacePressed;
+	bool _inputEnterPressed;
+	bool _inputEscapePressed;
+	bool _inputTildePressed;
+
+	HotSpot *getHoveredHotspot(NodePtr nodeData, uint16 var = 0);
 	void updateCursor();
 
 	void addArchive(const Common::String &file, bool mandatory);
+	void openArchives();
+	void closeArchives();
+
+	bool isInventoryVisible();
 
 	friend class Console;
 };

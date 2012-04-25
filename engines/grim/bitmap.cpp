@@ -24,8 +24,11 @@
 
 #include "common/endian.h"
 
+#include "graphics/colormasks.h"
+#include "graphics/pixelbuffer.h"
+
+#include "engines/grim/savegame.h"
 #include "engines/grim/debug.h"
-#include "engines/grim/grim.h"
 #include "engines/grim/bitmap.h"
 #include "engines/grim/resource.h"
 #include "engines/grim/gfx_base.h"
@@ -91,7 +94,7 @@ char *makeBitmapFromTile(char **bits, int width, int height, int bpp) {
 
 #endif
 
-BitmapData *BitmapData::getBitmapData(const Common::String &fname, Common::SeekableReadStream *data) {
+BitmapData *BitmapData::getBitmapData(const Common::String &fname) {
 	Common::String str(fname);
 	if (_bitmaps && _bitmaps->contains(str)) {
 		BitmapData *b = (*_bitmaps)[str];
@@ -99,7 +102,7 @@ BitmapData *BitmapData::getBitmapData(const Common::String &fname, Common::Seeka
 		return b;
 	}
 
-	BitmapData *b = new BitmapData(fname, data);
+	BitmapData *b = new BitmapData(fname);
 	if (!_bitmaps) {
 		_bitmaps = new Common::HashMap<Common::String, BitmapData *>();
 	}
@@ -107,27 +110,38 @@ BitmapData *BitmapData::getBitmapData(const Common::String &fname, Common::Seeka
 	return b;
 }
 
-BitmapData::BitmapData(const Common::String &fname, Common::SeekableReadStream *data) {
+BitmapData::BitmapData(const Common::String &fname) {
 	_fname = fname;
 	_refCount = 1;
+	_data = 0;
+	_loaded = false;
+	_keepData = true;
+}
+
+void BitmapData::load() {
+	if (_loaded) {
+		return;
+	}
+	Common::SeekableReadStream *data = g_resourceloader->openNewStreamFile(_fname.c_str());
 
 	uint32 tag = data->readUint32BE();
 	switch(tag) {
 		case(MKTAG('B','M',' ',' ')):				//Grim bitmap
-			loadGrimBm(fname, data);
+			loadGrimBm(data);
 			break;
 		case(MKTAG('T','I','L','0')):				// MI4 bitmap
-			loadTile(fname, data);
+			loadTile(data);
 			break;
 		default:
-			if (!loadTGA(fname, data))	// Try to load as TGA.
+			if (!loadTGA(data))	// Try to load as TGA.
 				Debug::error(Debug::Bitmaps, "Invalid magic loading bitmap");
 			break;
 	}
+	delete data;
+	_loaded = true;
 }
 
-
-bool BitmapData::loadGrimBm(const Common::String &fname, Common::SeekableReadStream *data) {
+bool BitmapData::loadGrimBm(Common::SeekableReadStream *data) {
 	uint32 tag2 = data->readUint32BE();
 	if(tag2 != (MKTAG('F','\0','\0','\0')))
 		return false;
@@ -140,12 +154,15 @@ bool BitmapData::loadGrimBm(const Common::String &fname, Common::SeekableReadStr
 	data->readUint32LE(); 				//_transparentColor
 	_format = data->readUint32LE();
 	_bpp = data->readUint32LE();
-	//	_blueBits = data->readUint32LE();
-	//	_greenBits = data->readUint32LE();
-	//	_redBits = data->readUint32LE();
-	//	_blueShift = data->readUint32LE();
-	//	_greenShift = data->readUint32LE();
-	//	_redShift = data->readUint32LE();
+// 	uint32 redBits = data->readUint32LE();
+// 	uint32 greenBits = data->readUint32LE();
+// 	uint32 blueBits = data->readUint32LE();
+// 	uint32 redShift = data->readUint32LE();
+// 	uint32 greenShift = data->readUint32LE();
+// 	uint32 blueShift = data->readUint32LE();
+
+	// Hardcode the format, since the values saved in the files are garbage for some, like "ha_0_elvos.zbm".
+	Graphics::PixelFormat pixelFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
 
 	data->seek(128, SEEK_SET);
 	_width = data->readUint32LE();
@@ -153,35 +170,32 @@ bool BitmapData::loadGrimBm(const Common::String &fname, Common::SeekableReadStr
 	_colorFormat = BM_RGB565;
 	_hasTransparency = false;
 
-	_data = new char *[_numImages];
+	_data = new Graphics::PixelBuffer[_numImages];
 	data->seek(0x80, SEEK_SET);
 	for (int i = 0; i < _numImages; i++) {
 		data->seek(8, SEEK_CUR);
-		_data[i] = new char[_bpp / 8 * _width * _height];
+		_data[i].create(pixelFormat, _width * _height, DisposeAfterUse::YES);
 		if (codec == 0) {
 			uint32 dsize = _bpp / 8 * _width * _height;
-			data->read(_data[i], dsize);
+			data->read(_data[i].getRawBuffer(), dsize);
 		} else if (codec == 3) {
 			int compressed_len = data->readUint32LE();
 			char *compressed = new char[compressed_len];
 			data->read(compressed, compressed_len);
-			bool success = decompress_codec3(compressed, _data[i], _bpp / 8 * _width * _height);
+			bool success = decompress_codec3(compressed, (char *)_data[i].getRawBuffer(), _bpp / 8 * _width * _height);
 			delete[] compressed;
 			if (!success)
-				warning(".. when loading image %s.\n", fname.c_str());
-			char *temp = new char[_bpp / 8 * _width * _height];
-			memcpy(temp, _data[i], _bpp / 8 * _width * _height);
-			delete[] _data[i];
-			_data[i] = temp;
-		}
-		else
+				warning(".. when loading image %s.\n", _fname.c_str());
+		} else
 			Debug::error(Debug::Bitmaps, "Unknown image codec in BitmapData ctor!");
 
 #ifdef SCUMM_BIG_ENDIAN
-		if (_format == 1)
+		if (_format == 1) {
+			uint16 *d = (uint16 *)_data[i].getRawBuffer();
 			for (int j = 0; j < _width * _height; ++j) {
-				((uint16 *)_data[i])[j] = SWAP_BYTES_16(((uint16 *)_data[i])[j]);
+				d[j] = SWAP_BYTES_16(d[j]);
 			}
+		}
 #endif
 	}
 
@@ -194,7 +208,7 @@ bool BitmapData::loadGrimBm(const Common::String &fname, Common::SeekableReadStr
 	return true;
 }
 
-BitmapData::BitmapData(const char *data, int w, int h, int bpp, const char *fname) {
+BitmapData::BitmapData(const Graphics::PixelBuffer &buf, int w, int h, const char *fname) {
 	_fname = fname;
 	_refCount = 1;
 	Debug::debug(Debug::Bitmaps, "New bitmap loaded: %s\n", fname);
@@ -206,32 +220,29 @@ BitmapData::BitmapData(const char *data, int w, int h, int bpp, const char *fnam
 	_format = 1;
 	_numTex = 0;
 	_texIds = NULL;
-	_bpp = bpp;
+	_bpp = buf.getFormat().bytesPerPixel * 8;
 	_hasTransparency = false;
 	_colorFormat = BM_RGB565;
-	_data = new char *[_numImages];
-	_data[0] = new char[_bpp / 8 * _width * _height];
-	memcpy(_data[0], data, _bpp / 8 * _width * _height);
+	_data = new Graphics::PixelBuffer[_numImages];
+	_data[0].create(buf.getFormat(), w * h, DisposeAfterUse::YES);
+	_data[0].copyBuffer(0, w * h, buf);
+	_loaded = true;
+	_keepData = true;
 
 	g_driver->createBitmap(this);
 }
 
 BitmapData::BitmapData() :
 	_numImages(0), _width(0), _height(0), _x(0), _y(0), _format(0), _numTex(0),
-	_bpp(0), _colorFormat(0), _texIds(0), _hasTransparency(false), _data(NULL), _refCount(1) {
+	_bpp(0), _colorFormat(0), _texIds(0), _hasTransparency(false), _data(NULL), _refCount(1), _loaded(false) {
 }
 
 BitmapData::~BitmapData() {
-	if (_data) {
-		for (int i = 0; i < _numImages; i++)
-			if (_data[i])
-				delete[] _data[i];
-
-		delete[] _data;
-		_data = NULL;
-
+	_keepData = false;
+	if (_loaded) {
 		g_driver->destroyBitmap(this);
 	}
+	freeData();
 	if (_bitmaps) {
 		if (_bitmaps->contains(_fname)) {
 			_bitmaps->erase(_fname);
@@ -242,40 +253,49 @@ BitmapData::~BitmapData() {
 		}
 	}
 }
-	
-bool BitmapData::loadTGA(const Common::String &fname, Common::SeekableReadStream *data) {
+
+void BitmapData::freeData() {
+	if (!_keepData) {
+		delete[] _data;
+		_data = NULL;
+	}
+}
+
+bool BitmapData::loadTGA(Common::SeekableReadStream *data) {
 	data->seek(0, SEEK_SET);
 	if (data->readByte() != 0)	// Verify that description-field is empty
 		return false;
 	data->seek(1, SEEK_CUR);
-	
+
 	int format = data->readByte();
 	if (format != 2)
 		return false;
-	
+
 	data->seek(9, SEEK_CUR);
 	_width = data->readUint16LE();
 	_height = data->readUint16LE();;
 	_format = 1;
 	_x = 0;
 	_y = 0;
-	
+
 	int bpp = data->readByte();
+	Graphics::PixelFormat pixelFormat;
 	if (bpp == 32) {
 		_colorFormat = BM_RGBA;
+		pixelFormat = Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24);
 		_bpp = 4;
 	} else {
 		return false;
 	}
-	
+
 	uint8 desc = data->readByte();
 	uint8 flipped = !(desc & 32);
 
 	if (!(bpp == 24 || bpp == 32)) // Assure we have 24/32 bpp
 		return false;
-	_data = new char*[1];
-	_data[0] = new char[_width * _height * (bpp / 8)];
-	char *writePtr = _data[0] + (_width * (_height - 1) * bpp / 8);
+	_data = new Graphics::PixelBuffer[1];
+	_data[0].create(pixelFormat, _width * _height, DisposeAfterUse::YES);
+	char *writePtr = (char *)_data[0].getRawBuffer(_width * (_height - 1));
 
 	if (flipped) {
 		for (int i = 0; i < _height; i++) {
@@ -283,22 +303,23 @@ bool BitmapData::loadTGA(const Common::String &fname, Common::SeekableReadStream
 			writePtr -= (_width * bpp / 8);
 		}
 	} else {
-		data->read(_data[0], _width * _height * (bpp / 8));		
+		data->read(_data[0].getRawBuffer(), _width * _height * (bpp / 8));
 	}
-	
+
 	uint8 x;
 	for (int i = 0; i < _width * _height * (bpp / 8); i+=4) {
-		x = _data[0][i];
-		_data[0][i] = _data[0][i + 2];
-		_data[0][i + 2] = x;
+		byte *b = _data[0].getRawBuffer();
+		x = b[i];
+		b[i] = b[i + 2];
+		b[i + 2] = x;
 	}
-	
+
 	_numImages = 1;
 	g_driver->createBitmap(this);
 	return true;
 }
 
-bool BitmapData::loadTile(const Common::String &fname, Common::SeekableReadStream *o) {
+bool BitmapData::loadTile(Common::SeekableReadStream *o) {
 #ifdef ENABLE_MONKEY4
 	_x = 0;
 	_y = 0;
@@ -306,16 +327,15 @@ bool BitmapData::loadTile(const Common::String &fname, Common::SeekableReadStrea
 	o->seek(0, SEEK_SET);
 	//warning("Loading TILE: %s",fname.c_str());
 
-	uint32 id, bmoffset;
-	id = o->readUint32LE();
+	/*uint32 id = */o->readUint32LE();
 	// Should check that we actually HAVE a TIL
-	bmoffset = o->readUint32LE();
+	uint32 bmoffset = o->readUint32LE();
 	o->seek(bmoffset + 16);
 	int numSubImages = o->readUint32LE();
 	if (numSubImages < 5)
 		error("Can not handle a tile with less than 5 sub images");
 
-	_data = new char *[numSubImages];
+	char **data = new char *[numSubImages];
 
 	o->seek(16, SEEK_CUR);
 	_bpp = o->readUint32LE();
@@ -328,33 +348,39 @@ bool BitmapData::loadTile(const Common::String &fname, Common::SeekableReadStrea
 
 	int size = _bpp / 8 * _width * _height;
 	for (int i = 0; i < numSubImages; ++i) {
-		_data[i] = new char[size];
+		data[i] = new char[size];
 		o->seek(8, SEEK_CUR);
-		o->read(_data[i], size);
+		o->read(data[i], size);
 	}
 
-	char *bMap = makeBitmapFromTile(_data, 640, 480, _bpp);
+	char *bMap = makeBitmapFromTile(data, 640, 480, _bpp);
 	for (int i = 0; i < numSubImages; ++i) {
-		delete[] _data[i];
+		delete[] data[i];
 	}
-	_width = 640;
-	_height = 480;
-	_data[0] = bMap;
-	_numImages = 1;
-
+	delete[] data;
+	Graphics::PixelFormat pixelFormat;
 	if (_bpp == 16) {
 		_colorFormat = BM_RGB1555;
+		pixelFormat = Graphics::createPixelFormat<1555>();
 		//convertToColorFormat(0, BM_RGBA);
 	} else {
+		pixelFormat = Graphics::PixelFormat(4, 8,8,8,8, 0, 8, 16, 24);
 		_colorFormat = BM_RGBA;
 	}
+
+	_width = 640;
+	_height = 480;
+	_numImages = 1;
+	_data = new Graphics::PixelBuffer[_numImages];
+	_data[0].create(pixelFormat, _width * _height, DisposeAfterUse::YES);
+	_data[0].set(pixelFormat, (byte *)bMap);
 
 	g_driver->createBitmap(this);
 #endif // ENABLE_MONKEY4
 	return true;
 }
 
-char *BitmapData::getImageData(int num) const {
+const Graphics::PixelBuffer &BitmapData::getImageData(int num) const {
 	assert(num >= 0);
 	assert(num < _numImages);
 	return _data[num];
@@ -362,61 +388,73 @@ char *BitmapData::getImageData(int num) const {
 
 // Bitmap
 
-Bitmap::Bitmap(const Common::String &fname, Common::SeekableReadStream *data) :
-		PoolObject<Bitmap, MKTAG('V', 'B', 'U', 'F')>() {
-	_data = BitmapData::getBitmapData(fname, data);
-	_x = _data->_x;
-	_y = _data->_y;
+Bitmap::Bitmap(const Common::String &fname) {
+	_data = BitmapData::getBitmapData(fname);
 	_currImage = 1;
 }
 
-Bitmap::Bitmap(const char *data, int w, int h, int bpp, const char *fname) :
-		PoolObject<Bitmap, MKTAG('V', 'B', 'U', 'F')>() {
-	_data = new BitmapData(data, w, h, bpp, fname);
-	_x = _data->_x;
-	_y = _data->_y;
+Bitmap::Bitmap(const Graphics::PixelBuffer &buf, int w, int h, const char *fname) {
+	_data = new BitmapData(buf, w, h, fname);
 	_currImage = 1;
 }
 
-Bitmap::Bitmap() :
-		PoolObject<Bitmap, MKTAG('V', 'B', 'U', 'F')>() {
+Bitmap::Bitmap() {
 	_data = new BitmapData();
+}
+
+Bitmap *Bitmap::create(const Common::String &filename) {
+	if (!SearchMan.hasFile(filename)) {
+		warning("Could not find bitmap %s", filename.c_str());
+		return NULL;
+	}
+	Bitmap *b = new Bitmap(filename);
+	return b;
 }
 
 void Bitmap::saveState(SaveGame *state) const {
 	state->writeString(getFilename());
 
 	state->writeLESint32(getActiveImage());
-	state->writeLESint32(getX());
-	state->writeLESint32(getY());
 }
 
 void Bitmap::restoreState(SaveGame *state) {
 	freeData();
 
 	Common::String fname = state->readString();
-	Common::SeekableReadStream *data = g_resourceloader->openNewStreamFile(fname.c_str(), true);
-	_data = BitmapData::getBitmapData(fname, data);
+	_data = BitmapData::getBitmapData(fname);
 
 	_currImage = state->readLESint32();
-	_x = state->readLESint32();
-	_y = state->readLESint32();
 }
 
-void Bitmap::draw() const {
+void Bitmap::draw() {
+	_data->load();
 	if (_currImage == 0)
 		return;
 
-	g_driver->drawBitmap(this);
+	g_driver->drawBitmap(this, _data->_x, _data->_y);
+}
+
+void Bitmap::draw(int x, int y) {
+	_data->load();
+	if (_currImage == 0)
+		return;
+
+	g_driver->drawBitmap(this, x, y);
 }
 
 void Bitmap::setActiveImage(int n) {
 	assert(n >= 0);
+	_data->load();
 	if ((n - 1) >= _data->_numImages) {
-		warning("Bitmap::setNumber: no anim image: %d. (%s)", n, _data->_fname.c_str());
+		warning("Bitmap::setActiveImage: no anim image: %d. (%s)", n, _data->_fname.c_str());
 	} else {
 		_currImage = n;
 	}
+}
+
+int Bitmap::getNumImages() const {
+	_data->load();
+	return _data->_numImages;
 }
 
 void Bitmap::freeData() {
@@ -431,108 +469,31 @@ Bitmap::~Bitmap() {
 	freeData();
 }
 
-void BitmapData::convertToColorFormat(int num, int format) {
-	// Supports 1555->RGBA, RGBA->565
-	unsigned char red = 0, green = 0, blue = 0, alpha = 0;
-	int size = _width * _height * (_bpp / 8);
-	if (_colorFormat == BM_RGB1555) {
-		uint16 *bitmapData = reinterpret_cast<uint16 *>(_data[num]);
+const Graphics::PixelFormat &Bitmap::getPixelFormat(int num) const {
+	return getData(num).getFormat();
+}
 
-		if (format == BM_RGBA && _bpp == 16) {
-			// Convert data to 32-bit RGBA format
-			char *newData = new char[_width * _height * 4];
-			char *to = newData;
+void BitmapData::convertToColorFormat(int num, const Graphics::PixelFormat &format) {
+	if (_data[num].getFormat() == format) {
+		return;
+	}
 
-			for (int i = 0; i< _height * _width; i++, bitmapData++, to += 4) {
-				uint pixel = *bitmapData;
-				// Alpha, then 555 (BGR).
-				blue = (pixel >> 10) & 0x1f;
-				to[2] = blue << 3 | blue >> 2;
-				green = (pixel >> 5) & 0x1f;
-				to[1] = green << 3 | green >> 2;
-				red = (pixel & 0x1f);
-				to[0] = red << 3 | red >> 2;
+	Graphics::PixelBuffer dst(format, _width * _height, DisposeAfterUse::NO);
 
-				if (pixel >> 15 & 1)
-					alpha = 255;
-				else
-					alpha = 0;
-				to[3] = alpha;
-			}
-			delete _data[num];
-			_data[num] = newData;
-			_colorFormat = BM_RGBA;
-			_bpp = 32;
-		} else if (format == BM_RGB565){ // 1555 -> 565 (Incomplete)
-			convertToColorFormat(num, BM_RGBA);
-			convertToColorFormat(num, BM_RGB565);
-			warning("Conversion 1555->565 done with 1555->RGBA->565");
-			return;
-			warning("Conversion 1555->565 is not properly implemented");
-			// This doesn't work properly, so falling back to double-conversion via RGBA for now.
-			uint16 *to = reinterpret_cast<uint16 *>(_data[num]);
-			for (int i = 1; i < _height * _width; i++, bitmapData++, to++) {
-				uint pixel = *bitmapData;
-				// Alpha, then 555.
-				if (to[0] & 128) { // Chroma key
-					to[0] = 0xf8;
-					to[1] = 0x1f;
-				} else {
-					blue = (pixel >> 10) & 0x1f;
-					//red = red << 3 | red >> 2;
-					green = (pixel >> 5) & 0x1f;
-					green = green << 1 | green >> 1;
-					red = (pixel) & 0x1f;
-					to[0] = (red << 3) | green >> 3;
-					to[1] = (green << 5) | blue;
-				}
-			}
-			_colorFormat = BM_RGB565;
+	for (int i = 0; i < _width * _height; ++i) {
+		if (_data[num].getValueAt(i) == 0xf81f) { //transparency
+			dst.setPixelAt(i, 0xf81f);
+		} else {
+			dst.setPixelAt(i, _data[num]);
 		}
-	} else if (_colorFormat == BM_RGBA) {
-		if (format == BM_RGB565) { // RGBA->565
-			char* tempStore = _data[num];
-			char* newStore = new char[size / 2];
-			uint16 *to = reinterpret_cast<uint16 *>(newStore);
-			for(int j = 0; j < size;j += 4, to++){
-				red = (tempStore[j] >> 3) & 0x1f;
-				green = (tempStore[j + 1] >> 2) & 0x3f;
-				blue = (tempStore[j + 2] >> 3) &0x1f;
-				*to = (red << 11) | (green << 5) | blue;
-			}
-			delete[] tempStore;
-			_data[num] = newStore;
-			_colorFormat = BM_RGB565;
-		}
+	}
+	_data[num].free();
+	_data[num] = dst;
+}
 
-	} else if (_colorFormat == BM_RGB565) {
-		if (format == BM_RGBA && _bpp == 16) {
-			byte *tempData = new byte[4 * _width * _height];
-			// Convert data to 32-bit RGBA format
-			byte *tempDataPtr = tempData;
-			uint16 *bitmapData = reinterpret_cast<uint16 *>(_data[num]);
-			for (int i = 0; i < _width * _height; i++, tempDataPtr += 4, bitmapData++) {
-				uint16 pixel = *bitmapData;
-				int r = pixel >> 11;
-				tempDataPtr[0] = (r << 3) | (r >> 2);
-				int g = (pixel >> 5) & 0x3f;
-				tempDataPtr[1] = (g << 2) | (g >> 4);
-				int b = pixel & 0x1f;
-				tempDataPtr[2] = (b << 3) | (b >> 2);
-				if (pixel == 0xf81f) { // transparent
-					tempDataPtr[3] = 0;
-					_hasTransparency = true;
-				} else {
-					tempDataPtr[3] = 255;
-				}
-			}
-			delete[] _data[num];
-			_data[num] = (char *)tempData;
-			_colorFormat = BM_RGBA;
-			_bpp = 32;
-		}
-	} else {
-		error("Conversion between format: %d and format %d not implemented",_colorFormat, format);
+void BitmapData::convertToColorFormat(const Graphics::PixelFormat &format) {
+	for (int i = 0; i < _numImages; ++i) {
+		convertToColorFormat(i, format);
 	}
 }
 
@@ -572,13 +533,13 @@ static bool decompress_codec3(const char *compressed, char *result, int maxBytes
 				copy_len = 2 * bit;
 				GET_BIT;
 				copy_len += bit + 3;
-				copy_offset = *(uint8 *)(compressed++) - 0x100;
+				copy_offset = *(const uint8 *)(compressed++) - 0x100;
 			} else {
-				copy_offset = (*(uint8 *)(compressed) | (*(uint8 *)(compressed + 1) & 0xf0) << 4) - 0x1000;
-				copy_len = (*(uint8 *)(compressed + 1) & 0xf) + 3;
+				copy_offset = (*(const uint8 *)(compressed) | (*(const uint8 *)(compressed + 1) & 0xf0) << 4) - 0x1000;
+				copy_len = (*(const uint8 *)(compressed + 1) & 0xf) + 3;
 				compressed += 2;
 				if (copy_len == 3) {
-					copy_len = *(uint8 *)(compressed++) + 1;
+					copy_len = *(const uint8 *)(compressed++) + 1;
 					if (copy_len == 1)
 						return true;
 				}

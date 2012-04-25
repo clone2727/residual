@@ -22,25 +22,23 @@
 
 #include "engines/grim/objectstate.h"
 #include "engines/grim/savegame.h"
-#include "engines/grim/grim.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/resource.h"
 #include "engines/grim/bitmap.h"
 
 namespace Grim {
 
 ObjectState::ObjectState(int setup, ObjectState::Position position, const char *bitmap, const char *zbitmap, bool transparency) :
-		PoolObject<ObjectState, MKTAG('S', 'T', 'A', 'T')>(), _setupID(setup), _pos(position), _visibility(false) {
+		_setupID(setup), _pos(position), _visibility(false) {
 
-	_bitmap = g_resourceloader->loadBitmap(bitmap);
+	_bitmap = Bitmap::create(bitmap);
 	if (zbitmap) {
-		_zbitmap = g_resourceloader->loadBitmap(zbitmap);
+		_zbitmap = Bitmap::create(zbitmap);
 	} else
 		_zbitmap = NULL;
 }
 
 ObjectState::ObjectState() :
-		PoolObject<ObjectState, MKTAG('S', 'T', 'A', 'T')>(), _bitmap(NULL), _zbitmap(NULL) {
+		_bitmap(NULL), _zbitmap(NULL) {
 
 }
 
@@ -76,29 +74,29 @@ void ObjectState::draw() {
 }
 
 void ObjectState::saveState(SaveGame *savedState) const {
-	savedState->writeLESint32(_visibility);
-	savedState->writeLEUint32(_setupID);
-	savedState->writeLEUint32(_pos);
+	savedState->writeBool(_visibility);
+	savedState->writeLESint32(_setupID);
+	savedState->writeLESint32(_pos);
 
 	//_bitmap
 	if (_bitmap) {
 		savedState->writeLESint32(_bitmap->getId());
 	} else {
-		savedState->writeLEUint32(0);
+		savedState->writeLESint32(0);
 	}
 
 	//_zbitmap
 	if (_zbitmap) {
 		savedState->writeLESint32(_zbitmap->getId());
 	} else {
-		savedState->writeLEUint32(0);
+		savedState->writeLESint32(0);
 	}
 }
 
 bool ObjectState::restoreState(SaveGame *savedState) {
-	_visibility = savedState->readLEUint32();
-	_setupID    = savedState->readLEUint32();
-	_pos        = (Position) savedState->readLEUint32();
+	_visibility = savedState->readBool();
+	_setupID    = savedState->readLESint32();
+	_pos        = (Position) savedState->readLESint32();
 
 	_bitmap = Bitmap::getPool().getObject(savedState->readLESint32());
 	_zbitmap = Bitmap::getPool().getObject(savedState->readLESint32());

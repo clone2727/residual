@@ -8,16 +8,21 @@ MODULE_OBJS := \
 	streamdebug.o \
 	error.o \
 	EventDispatcher.o \
+	EventMapper.o \
 	EventRecorder.o \
 	file.o \
 	fs.o \
+	gui_options.o \
 	hashmap.o \
+	language.o \
 	macresman.o \
 	memorypool.o \
 	md5.o \
 	mutex.o \
+	platform.o \
 	random.o \
 	rational.o \
+	rendermode.o \
 	str.o \
 	stream.o \
 	system.o \

@@ -52,7 +52,7 @@ public:
 	const char *getVideoDeviceName();
 
 	void setupCamera(float fov, float nclip, float fclip, float roll);
-	void positionCamera(Math::Vector3d pos, Math::Vector3d interest);
+	void positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest);
 
 	void clearScreen();
 	void flipBuffer();
@@ -61,8 +61,9 @@ public:
 
 	void getBoundingBoxPos(const Mesh *model, int *x1, int *y1, int *x2, int *y2);
 
-	void startActorDraw(Math::Vector3d pos, float scale, const Math::Angle &yaw,
-						const Math::Angle &pitch, const Math::Angle &roll);
+	void startActorDraw(const Math::Vector3d &pos, float scale, const Math::Angle &yaw,
+						const Math::Angle &pitch, const Math::Angle &roll, const bool inOverworld,
+						const float alpha);
 	void finishActorDraw();
 	void setShadow(Shadow *shadow);
 	void drawShadowPlanes();
@@ -92,7 +93,7 @@ public:
 	void destroyMaterial(Texture *material);
 
 	void createBitmap(BitmapData *bitmap);
-	void drawBitmap(const Bitmap *bitmap);
+	void drawBitmap(const Bitmap *bitmap, int x, int y);
 	void destroyBitmap(BitmapData *bitmap);
 
 	void createFont(Font *font);
@@ -120,6 +121,8 @@ public:
 	void drawMovieFrame(int offsetX, int offsetY);
 	void releaseMovieFrame();
 
+	void createSpecialtyTextures();
+
 protected:
 	void drawDepthBitmap(int x, int y, int w, int h, char *data);
 private:
@@ -131,6 +134,10 @@ private:
 	byte *_storedDisplay;
 	bool _useDepthShader;
 	GLuint _fragmentProgram;
+	bool _useDimShader;
+	GLuint _dimFragProgram;
+	GLint _maxLights;
+	float _alpha;
 };
 
 } // end of namespace Grim

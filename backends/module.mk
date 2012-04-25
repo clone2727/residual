@@ -33,6 +33,7 @@ endif
 ifdef ENABLE_KEYMAPPER
 MODULE_OBJS += \
 	keymapper/action.o \
+	keymapper/hardware-input.o \
 	keymapper/keymap.o \
 	keymapper/keymapper.o \
 	keymapper/remap-dialog.o
@@ -90,14 +91,16 @@ MODULE_OBJS += \
 	fs/windows/windows-fs-factory.o \
 	midi/windows.o \
 	plugins/win32/win32-provider.o \
+	saves/windows/windows-saves.o \
 	taskbar/win32/win32-taskbar.o
 endif
 
 ifdef AMIGAOS
 MODULE_OBJS += \
 	fs/amigaos4/amigaos4-fs.o \
-	fs/amigaos4/amigaos4-fs-factory.o \
-	midi/camd.o
+	fs/amigaos4/amigaos4-fs-factory.o
+#ResidualVM: disabled below
+#	midi/camd.o
 endif
 
 ifdef PLAYSTATION3

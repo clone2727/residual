@@ -59,10 +59,13 @@ public:
 	const Common::String describeVar(uint16 var);
 	const Common::String describeCondition(int16 condition);
 
+	DECLARE_VAR(14, CursorTransparency)
+
 	DECLARE_VAR(47, ProjectorAngleX)
 	DECLARE_VAR(48, ProjectorAngleY)
 	DECLARE_VAR(49, ProjectorAngleZoom)
 	DECLARE_VAR(50, ProjectorAngleBlur)
+	DECLARE_VAR(51, DraggedWeight)
 
 	DECLARE_VAR(57, DragEnded)
 	DECLARE_VAR(58, DragLeverSpeed)
@@ -79,11 +82,22 @@ public:
 	DECLARE_VAR(68, MenuSavedRoom)
 	DECLARE_VAR(69, MenuSavedNode)
 
+	DECLARE_VAR(70, SecondsCountdown)
 	DECLARE_VAR(71, FrameCountdown)
+
+	DECLARE_VAR(84, InputMousePressed)
+	DECLARE_VAR(88, InputEscapePressed)
+	DECLARE_VAR(89, InputTildePressed)
+	DECLARE_VAR(90, InputSpacePressed)
+
+	DECLARE_VAR(92, HotspotActiveRect)
 
 	DECLARE_VAR(115, SunspotIntensity)
 	DECLARE_VAR(116, SunspotColor)
 	DECLARE_VAR(117, SunspotRadius)
+
+	DECLARE_VAR(131, CursorLocked)
+	DECLARE_VAR(132, CursorHidden)
 
 	DECLARE_VAR(136, CameraPitch)
 	DECLARE_VAR(137, CameraHeading)
@@ -92,6 +106,7 @@ public:
 
 	DECLARE_VAR(142, MovieStartFrame)
 	DECLARE_VAR(143, MovieEndFrame)
+	DECLARE_VAR(146, MovieOverrideSubtitles)
 	DECLARE_VAR(149, MovieConditionBit)
 	DECLARE_VAR(150, MoviePreloadToMemory)
 	DECLARE_VAR(151, MovieScriptDriven)
@@ -110,10 +125,20 @@ public:
 	DECLARE_VAR(173, MoviePlayingVar)
 
 	DECLARE_VAR(178, MovieUseBackground)
+	DECLARE_VAR(179, CameraSkipAnimation)
+
+	DECLARE_VAR(185, CameraMoveSpeed)
 
 	DECLARE_VAR(189, LocationNextNode)
 	DECLARE_VAR(190, LocationNextRoom)
 	DECLARE_VAR(191, LocationNextAge)
+
+	DECLARE_VAR(195, BallPosition)
+	DECLARE_VAR(196, BallFrame)
+	DECLARE_VAR(197, BallLeverLeft)
+	DECLARE_VAR(198, BallLeverRight)
+
+	DECLARE_VAR(228, BallDoorOpen)
 
 	DECLARE_VAR(243, ProjectorX)
 	DECLARE_VAR(244, ProjectorY)
@@ -131,8 +156,33 @@ public:
 	DECLARE_VAR(282, JournalSaavedroLastPage)
 	DECLARE_VAR(283, JournalSaavedroChapter)
 	DECLARE_VAR(284, JournalSaavedroPageInChapter)
+
+	DECLARE_VAR(329, TeslaAllAligned)
+	DECLARE_VAR(330, TeslaTopAligned)
+	DECLARE_VAR(331, TeslaMiddleAligned)
+	DECLARE_VAR(332, TeslaBottomAligned)
+	DECLARE_VAR(333, TeslaMovieStart)
+
+	DECLARE_VAR(444, ResonanceRingsSolved)
+
+	DECLARE_VAR(460, PinballRemainingPegs)
+
 	DECLARE_VAR(480, BookStateTomahna)
 	DECLARE_VAR(481, BookStateReleeshahn)
+
+	DECLARE_VAR(489, SymbolCode2Solved)
+	DECLARE_VAR(495, SymbolCode1AllSolved)
+	DECLARE_VAR(496, SymbolCode1CurrentSolved)
+	DECLARE_VAR(497, SymbolCode1TopSolved)
+	DECLARE_VAR(502, SymbolCode1LeftSolved)
+	DECLARE_VAR(507, SymbolCode1RightSolved)
+
+	DECLARE_VAR(1322, ZipModeEnabled)
+	DECLARE_VAR(1323, SubtitlesEnabled)
+	DECLARE_VAR(1324, WaterEffects)
+	DECLARE_VAR(1325, TransitionSpeed)
+	DECLARE_VAR(1326, MouseSpeed)
+	DECLARE_VAR(1327, DialogResult)
 
 	DECLARE_VAR(1337, MenuEscapePressed)
 	DECLARE_VAR(1338, MenuNextAction)
@@ -146,6 +196,15 @@ public:
 	DECLARE_VAR(1352, MenuSaveLoadSelectedItem)
 	DECLARE_VAR(1353, MenuSaveLoadCurrentPage)
 
+	DECLARE_VAR(1374, OverallVolume)
+	DECLARE_VAR(1377, MusicVolume)
+	DECLARE_VAR(1380, MusicFrequency)
+	DECLARE_VAR(1393, LanguageAudio)
+	DECLARE_VAR(1394, LanguageText)
+
+	DECLARE_VAR(1396, HotspotHovered)
+	DECLARE_VAR(1397, SpotSubtitle)
+
 	DECLARE_VAR(1399, DragLeverLimited)
 	DECLARE_VAR(1400, DragLeverLimitMin)
 	DECLARE_VAR(1401, DragLeverLimitMax)
@@ -156,6 +215,8 @@ public:
 	ViewType getViewType() { return static_cast<ViewType>(_data.currentNodeType); }
 	void setViewType(ViewType t) { _data.currentNodeType = t; }
 
+	float getLookAtFOV() { return _data.lookatFOV; }
+	void setLookAtFOV(float fov) { _data.lookatFOV = fov; }
 	float getLookAtPitch() { return _data.lookatPitch; }
 	float getLookAtHeading() { return _data.lookatHeading; }
 	void lookAt(float pitch, float heading) { _data.lookatPitch = pitch; _data.lookatHeading = heading; }
@@ -180,8 +241,8 @@ private:
 		uint32 version;
 		uint32 gameRunning;
 		uint32 currentFrame;
-		uint32 dword_4C2C3C;
-		uint32 dword_4C2C40;
+		uint32 nextSecondsUpdate;
+		uint32 secondsPlayed;
 		uint32 dword_4C2C44;
 		uint32 dword_4C2C48;
 		uint32 dword_4C2C4C;

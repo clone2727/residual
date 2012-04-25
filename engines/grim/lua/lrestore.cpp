@@ -111,9 +111,9 @@ struct ArrayIDObj {
 };
 
 static int sortCallback(const void *id1, const void *id2) {
-#ifdef TARGET_64BITS
-	uint64 p1 = ((ArrayIDObj *)id1)->idObj.low | ((uint64)(((ArrayIDObj *)id1)->idObj.hi)) << 32;
-	uint64 p2 = ((ArrayIDObj *)id2)->idObj.low | ((uint64)(((ArrayIDObj *)id2)->idObj.hi)) << 32;
+#ifdef SCUMM_64BITS
+	uint64 p1 = ((const ArrayIDObj *)id1)->idObj.low | ((uint64)(((const ArrayIDObj *)id1)->idObj.hi)) << 32;
+	uint64 p2 = ((const ArrayIDObj *)id2)->idObj.low | ((uint64)(((const ArrayIDObj *)id2)->idObj.hi)) << 32;
 	if (p1 > p2) {
 		return 1;
 	} else if (p1 < p2) {
@@ -122,9 +122,9 @@ static int sortCallback(const void *id1, const void *id2) {
 		return 0;
 	}
 #else
-	if (((ArrayIDObj *)id1)->idObj.low > ((ArrayIDObj *)id2)->idObj.low) {
+	if (((const ArrayIDObj *)id1)->idObj.low > ((const ArrayIDObj *)id2)->idObj.low) {
 		return 1;
-	} else if (((ArrayIDObj *)id1)->idObj.low < ((ArrayIDObj *)id2)->idObj.low) {
+	} else if (((const ArrayIDObj *)id1)->idObj.low < ((const ArrayIDObj *)id2)->idObj.low) {
 		return -1;
 	} else {
 		return 0;
@@ -144,7 +144,7 @@ static bool arraysAllreadySort = false;
 
 static void recreateObj(TObject *obj) {
 	if (obj->ttype == LUA_T_CPROTO) {
-#ifdef TARGET_64BITS
+#ifdef SCUMM_64BITS
 		uint64 id = ((uint64)(obj->value.f)) >> 16;
 #else
 		uint32 id = ((uint32)(obj->value.f)) >> 16;
@@ -157,7 +157,7 @@ static void recreateObj(TObject *obj) {
 			list = list->next;
 		}
 
-#ifdef TARGET_64BITS
+#ifdef SCUMM_64BITS
 		int32 numberFunc = (uint64)(obj->value.f) & 0xffff;
 #else
 		int32 numberFunc = (uint32)(obj->value.f) & 0xffff;
@@ -532,7 +532,7 @@ void lua_Restore(SaveGame *savedState) {
 				task->base = savedState->readLESint32();
 				task->some_base = savedState->readLESint32();
 				task->some_results = savedState->readLESint32();
-				task->some_flag = savedState->readLESint32();
+				task->some_flag = savedState->readBool();
 				int32 pcOffset = savedState->readLESint32();
 				task->pc = task->tf->code + pcOffset;
 				task->aux = savedState->readLESint32();
@@ -550,8 +550,8 @@ void lua_Restore(SaveGame *savedState) {
 				state->some_task = state->some_task->next;
 		}
 
-		state->updated = savedState->readLESint32();
-		state->paused = savedState->readLESint32();
+		state->updated = savedState->readBool();
+		state->paused = savedState->readBool();
 		state->state_counter1 = savedState->readLESint32();
 		state->state_counter2 = savedState->readLESint32();
 
@@ -580,7 +580,7 @@ void lua_Restore(SaveGame *savedState) {
 			state->Cblocks[i].num = savedState->readLESint32();
 		}
 
-		state->id = savedState->readLESint32();
+		state->id = savedState->readLEUint32();
 		restoreObjectValue(&state->taskFunc, savedState);
 		if (state->taskFunc.ttype == LUA_T_PROTO || state->taskFunc.ttype == LUA_T_CPROTO)
 			recreateObj(&state->taskFunc);

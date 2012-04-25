@@ -39,6 +39,10 @@
 #include "graphics/fontman.h"
 #include "graphics/scaler.h"
 #include "graphics/surface.h"
+#include "graphics/pixelbuffer.h"
+static const OSystem::GraphicsMode s_supportedGraphicsModes[] = {
+	{0, 0, 0}
+};
 
 SurfaceSdlGraphicsManager::SurfaceSdlGraphicsManager(SdlEventSource *sdlEventSource)
 	:
@@ -62,18 +66,15 @@ SurfaceSdlGraphicsManager::SurfaceSdlGraphicsManager(SdlEventSource *sdlEventSou
 	// may reset it.
 	SDL_EnableUNICODE(1);
 
-#ifdef _WIN32_WCE
-	if (ConfMan.hasKey("use_GDI") && ConfMan.getBool("use_GDI")) {
-		SDL_VideoInit("windib", 0);
-		sdlFlags ^= SDL_INIT_VIDEO;
-	}
-#endif
+	SDL_ShowCursor(SDL_DISABLE);
 }
 
 SurfaceSdlGraphicsManager::~SurfaceSdlGraphicsManager() {
 	// Unregister the event observer
 	if (g_system->getEventManager()->getEventDispatcher() != NULL)
 		g_system->getEventManager()->getEventDispatcher()->unregisterObserver(this);
+
+	closeOverlay();
 }
 
 void SurfaceSdlGraphicsManager::initEventObserver() {
@@ -81,8 +82,13 @@ void SurfaceSdlGraphicsManager::initEventObserver() {
 	g_system->getEventManager()->getEventDispatcher()->registerObserver(this, 10, false);
 }
 
+void SurfaceSdlGraphicsManager::resetGraphicsScale() {
+	setGraphicsMode(0);
+}
+
 bool SurfaceSdlGraphicsManager::hasFeature(OSystem::Feature f) {
 	return
+		(f == OSystem::kFeatureFullscreenMode) ||
 #ifdef USE_OPENGL
 		(f == OSystem::kFeatureOpenGL);
 #else
@@ -91,10 +97,64 @@ bool SurfaceSdlGraphicsManager::hasFeature(OSystem::Feature f) {
 }
 
 void SurfaceSdlGraphicsManager::setFeatureState(OSystem::Feature f, bool enable) {
+	switch (f) {
+	case OSystem::kFeatureFullscreenMode:
+		_fullscreen = enable;
+		break;
+	default:
+		break;
+	}
 }
 
 bool SurfaceSdlGraphicsManager::getFeatureState(OSystem::Feature f) {
-	return false;
+	switch (f) {
+		case OSystem::kFeatureFullscreenMode:
+			return _fullscreen;
+		default:
+			return false;
+	}
+}
+
+const OSystem::GraphicsMode *SurfaceSdlGraphicsManager::supportedGraphicsModes() {
+	return s_supportedGraphicsModes;
+}
+
+const OSystem::GraphicsMode *SurfaceSdlGraphicsManager::getSupportedGraphicsModes() const {
+	return s_supportedGraphicsModes;
+}
+
+int SurfaceSdlGraphicsManager::getDefaultGraphicsMode() const {
+	return 0;// ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::beginGFXTransaction() {
+	// ResidualVM: not use it
+}
+
+OSystem::TransactionError SurfaceSdlGraphicsManager::endGFXTransaction() {
+	// ResidualVM: not use it
+	return OSystem::kTransactionSuccess;
+}
+
+#ifdef USE_RGB_COLOR
+Common::List<Graphics::PixelFormat> SurfaceSdlGraphicsManager::getSupportedFormats() const {
+	// ResidualVM: not use it
+	return _supportedFormats;
+}
+#endif
+
+bool SurfaceSdlGraphicsManager::setGraphicsMode(int mode) {
+	// ResidualVM: not use it
+	return true;
+}
+
+int SurfaceSdlGraphicsManager::getGraphicsMode() const {
+	// ResidualVM: not use it
+	return 0;
+}
+
+void SurfaceSdlGraphicsManager::initSize(uint w, uint h, const Graphics::PixelFormat *format) {
+	// ResidualVM: not use it
 }
 
 void SurfaceSdlGraphicsManager::launcherInitSize(uint w, uint h) {
@@ -102,7 +162,7 @@ void SurfaceSdlGraphicsManager::launcherInitSize(uint w, uint h) {
 	setupScreen(w, h, false, false);
 }
 
-byte *SurfaceSdlGraphicsManager::setupScreen(int screenW, int screenH, bool fullscreen, bool accel3d) {
+Graphics::PixelBuffer SurfaceSdlGraphicsManager::setupScreen(int screenW, int screenH, bool fullscreen, bool accel3d) {
 	uint32 sdlflags;
 	int bpp;
 
@@ -141,7 +201,6 @@ byte *SurfaceSdlGraphicsManager::setupScreen(int screenW, int screenH, bool full
 		sdlflags |= SDL_FULLSCREEN;
 
 	_screen = SDL_SetVideoMode(screenW, screenH, bpp, sdlflags);
-
 #ifdef USE_OPENGL
 	// If 32-bit with antialiasing failed, try 32-bit without antialiasing
 	if (!_screen && _opengl && _antialiasing) {
@@ -225,8 +284,9 @@ byte *SurfaceSdlGraphicsManager::setupScreen(int screenW, int screenH, bool full
 	if (!_overlayscreen)
 		error("allocating _overlayscreen failed");
 
-	_overlayFormat.bytesPerPixel = _overlayscreen->format->BytesPerPixel;
+	/*_overlayFormat.bytesPerPixel = _overlayscreen->format->BytesPerPixel;
 
+// 	For some reason the values below aren't right, at least on my system
 	_overlayFormat.rLoss = _overlayscreen->format->Rloss;
 	_overlayFormat.gLoss = _overlayscreen->format->Gloss;
 	_overlayFormat.bLoss = _overlayscreen->format->Bloss;
@@ -235,11 +295,17 @@ byte *SurfaceSdlGraphicsManager::setupScreen(int screenW, int screenH, bool full
 	_overlayFormat.rShift = _overlayscreen->format->Rshift;
 	_overlayFormat.gShift = _overlayscreen->format->Gshift;
 	_overlayFormat.bShift = _overlayscreen->format->Bshift;
-	_overlayFormat.aShift = _overlayscreen->format->Ashift;
+	_overlayFormat.aShift = _overlayscreen->format->Ashift;*/
+
+	_overlayFormat = Graphics::PixelFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
 
 	_screenChangeCount++;
 
-	return (byte *)_screen->pixels;
+	SDL_PixelFormat *f = _screen->format;
+	_screenFormat = Graphics::PixelFormat(f->BytesPerPixel, 8 - f->Rloss, 8 - f->Gloss, 8 - f->Bloss, 0,
+										f->Rshift, f->Gshift, f->Bshift, f->Ashift);
+
+	return Graphics::PixelBuffer(_screenFormat, (byte *)_screen->pixels);
 }
 
 #define BITMAP_TEXTURE_SIZE 256
@@ -348,13 +414,15 @@ void SurfaceSdlGraphicsManager::updateScreen() {
 		if (_overlayVisible) {
 			SDL_LockSurface(_screen);
 			SDL_LockSurface(_overlayscreen);
-			byte *src = (byte *)_overlayscreen->pixels;
-			byte *buf = (byte *)_screen->pixels;
+			Graphics::PixelBuffer srcBuf(_overlayFormat, (byte *)_overlayscreen->pixels);
+			Graphics::PixelBuffer dstBuf(_screenFormat, (byte *)_screen->pixels);
 			int h = _overlayHeight;
+
 			do {
-				memcpy(buf, src, _overlayWidth * _overlayscreen->format->BytesPerPixel);
-				src += _overlayscreen->pitch;
-				buf += _screen->pitch;
+				dstBuf.copyBuffer(0, _overlayWidth, srcBuf);
+
+				srcBuf.shiftBy(_overlayWidth);
+				dstBuf.shiftBy(_overlayWidth);
 			} while (--h);
 			SDL_UnlockSurface(_screen);
 			SDL_UnlockSurface(_overlayscreen);
@@ -363,14 +431,55 @@ void SurfaceSdlGraphicsManager::updateScreen() {
 	}
 }
 
+void SurfaceSdlGraphicsManager::copyRectToScreen(const byte *src, int pitch, int x, int y, int w, int h) {
+	// ResidualVM: not use it
+}
+
+Graphics::Surface *SurfaceSdlGraphicsManager::lockScreen() {
+	return NULL; // ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::unlockScreen() {
+	// ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::fillScreen(uint32 col) {
+	// ResidualVM: not use it
+}
+
 int16 SurfaceSdlGraphicsManager::getHeight() {
+	// ResidualVM specific
 	return _screen->h;
 }
 
 int16 SurfaceSdlGraphicsManager::getWidth() {
+	// ResidualVM specific
 	return _screen->w;
 }
 
+void SurfaceSdlGraphicsManager::setPalette(const byte *colors, uint start, uint num) {
+	// ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::grabPalette(byte *colors, uint start, uint num) {
+	// ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::setCursorPalette(const byte *colors, uint start, uint num) {
+	// ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::setShakePos(int shake_pos) {
+	// ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::setFocusRectangle(const Common::Rect &rect) {
+	// ResidualVM: not use it
+}
+
+void SurfaceSdlGraphicsManager::clearFocusRectangle() {
+	// ResidualVM: not use it
+}
 
 #pragma mark -
 #pragma mark --- Overlays ---
@@ -430,13 +539,15 @@ void SurfaceSdlGraphicsManager::clearOverlay() {
 	{
 		SDL_LockSurface(_screen);
 		SDL_LockSurface(_overlayscreen);
-		byte *src = (byte *)_screen->pixels;
-		byte *buf = (byte *)_overlayscreen->pixels;
+		Graphics::PixelBuffer srcBuf(_screenFormat, (byte *)_screen->pixels);
+		Graphics::PixelBuffer dstBuf(_overlayFormat, (byte *)_overlayscreen->pixels);
 		int h = _overlayHeight;
+
 		do {
-			memcpy(buf, src, _overlayWidth * _overlayscreen->format->BytesPerPixel);
-			src += _screen->pitch;
-			buf += _overlayscreen->pitch;
+			dstBuf.copyBuffer(0, _overlayWidth, srcBuf);
+
+			srcBuf.shiftBy(_overlayWidth);
+			dstBuf.shiftBy(_overlayWidth);
 		} while (--h);
 		SDL_UnlockSurface(_screen);
 		SDL_UnlockSurface(_overlayscreen);
@@ -474,7 +585,7 @@ void SurfaceSdlGraphicsManager::copyRectToOverlay(const OverlayColor *buf, int p
 	}
 
 	if (y < 0) {
-		h += y; 
+		h += y;
 		buf -= y * pitch;
 		y = 0;
 	}
@@ -526,11 +637,36 @@ bool SurfaceSdlGraphicsManager::showMouse(bool visible) {
 	return true;
 }
 
+// ResidualVM specific method
+bool SurfaceSdlGraphicsManager::lockMouse(bool lock) {
+	if (lock)
+		SDL_WM_GrabInput(SDL_GRAB_ON);
+	else
+		SDL_WM_GrabInput(SDL_GRAB_OFF);
+	return true;
+}
+
 void SurfaceSdlGraphicsManager::warpMouse(int x, int y) {
+	//ResidualVM specific
 	SDL_WarpMouse(x, y);
 }
 
+void SurfaceSdlGraphicsManager::setMouseCursor(const byte *buf, uint w, uint h, int hotspot_x, int hotspot_y, uint32 keycolor, int cursorTargetScale, const Graphics::PixelFormat *format) {
+	// ResidualVM: not use it
+}
+
+#pragma mark -
+#pragma mark --- On Screen Display ---
+#pragma mark -
+
+#ifdef USE_OSD
+void SurfaceSdlGraphicsManager::displayMessageOnOSD(const char *msg) {
+	// ResidualVM: not use it
+}
+#endif
+
 bool SurfaceSdlGraphicsManager::notifyEvent(const Common::Event &event) {
+	//ResidualVM specific
 	return false;
 }
 
@@ -552,13 +688,17 @@ void SurfaceSdlGraphicsManager::setAntialiasing(bool enable) {
 
 void SurfaceSdlGraphicsManager::notifyVideoExpose() {
 	_forceFull = true;
+	//ResidualVM specific:
+	updateScreen();
 }
 
 void SurfaceSdlGraphicsManager::transformMouseCoordinates(Common::Point &point) {
+	return; // ResidualVM: not use it
 }
 
 void SurfaceSdlGraphicsManager::notifyMousePos(Common::Point mouse) {
 	transformMouseCoordinates(mouse);
+	// ResidualVM: not use that:
 	//setMousePos(mouse.x, mouse.y);
 }
 

@@ -30,6 +30,16 @@
 #include "common/config-manager.h"
 #include "common/textconsole.h"
 
+//ResidualVM specific:
+#if defined(__amigaos4__)
+// KEYCODE_LESS and KEYCODE_GREATER are already defined in AmigaOS, inside
+// include/include_h/intuition/intuition.h (bug #3121350)
+#if defined(KEYCODE_LESS) && defined(KEYCODE_GREATER)
+#undef KEYCODE_LESS
+#undef KEYCODE_GREATER
+#endif
+#endif
+
 // FIXME move joystick defines out and replace with confile file options
 // we should really allow users to map any key to a joystick button
 #define JOY_DEADZONE 3200
@@ -53,7 +63,7 @@ SdlEventSource::SdlEventSource()
     : EventSource(), _scrollLock(false), _joystick(0), _lastScreenID(0), _graphicsManager(0) {
 	// Reset mouse state
 	memset(&_km, 0, sizeof(_km));
-/* ResidualVM doesn't support this
+
 	int joystick_num = ConfMan.getInt("joystick_num");
 	if (joystick_num > -1) {
 		// Initialize SDL joystick subsystem
@@ -66,13 +76,12 @@ SdlEventSource::SdlEventSource()
 			debug("Using joystick: %s", SDL_JoystickName(0));
 			_joystick = SDL_JoystickOpen(joystick_num);
 		}
-	}*/
+	}
 }
 
 SdlEventSource::~SdlEventSource() {
-/*	ResidualVM doesn't support this
 	if (_joystick)
-		SDL_JoystickClose(_joystick);*/
+		SDL_JoystickClose(_joystick);
 }
 
 int SdlEventSource::mapKey(SDLKey key, SDLMod mod, Uint16 unicode) {
@@ -348,14 +357,14 @@ Common::KeyCode SdlEventSource::SDLToOSystemKeycode(const SDLKey key) {
 
 bool SdlEventSource::pollEvent(Common::Event &event) {
 	handleKbdMouse();
-/* ResidualVM doesn't support this
+
 	// If the screen changed, send an Common::EVENT_SCREEN_CHANGED
 	int screenID = ((OSystem_SDL *)g_system)->getGraphicsManager()->getScreenChangeID();
 	if (screenID != _lastScreenID) {
 		_lastScreenID = screenID;
 		event.type = Common::EVENT_SCREEN_CHANGED;
 		return true;
-	}*/
+	}
 
 	SDL_Event ev;
 	while (SDL_PollEvent(&ev)) {

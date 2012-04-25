@@ -54,8 +54,9 @@ public:
 	int16 cursor;
 	Common::Array<Opcode> script;
 
-	bool isPointInRectsCube(const Common::Point &p);
-	bool isPointInRectsFrame(GameState *state, const Common::Point &p);
+	int32 isPointInRectsCube(const Common::Point &p);
+	int32 isPointInRectsFrame(GameState *state, const Common::Point &p);
+	bool isEnabled(GameState *state, uint16 var = 0);
 };
 
 

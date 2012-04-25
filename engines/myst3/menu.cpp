@@ -120,7 +120,7 @@ void Menu::updateMainMenu(uint16 action) {
 				goToNode(300);
 			} else if (choice == 1) {
 				// Quit
-				_vm->setShouldQuit();
+				_vm->quitGame();
 			}
 		}
 		break;
@@ -180,7 +180,7 @@ Dialog::Dialog(Myst3Engine *vm, uint id):
 	const Graphics::Surface *frame = _bink.decodeNextFrame();
 	_texture = _vm->_gfx->createTexture(frame);
 
-	_vm->_sound->play(699, 10);
+	_vm->_sound->playEffect(699, 10);
 }
 
 Dialog::~Dialog() {
@@ -212,11 +212,7 @@ int16 Dialog::update() {
 	// Process events
 	Common::Event event;
 	while (_vm->getEventManager()->pollEvent(event)) {
-		// Check for "Hard" quit"
-		if (event.type == Common::EVENT_QUIT) {
-			_vm->setShouldQuit();
-			return -2;
-		} else if (event.type == Common::EVENT_MOUSEMOVE) {
+		if (event.type == Common::EVENT_MOUSEMOVE) {
 			// Compute local mouse coordinates
 			_vm->_cursor->updatePosition(event.relMouse);
 			Common::Rect position = getPosition();
@@ -224,16 +220,16 @@ int16 Dialog::update() {
 			localMouse.x -= position.left;
 			localMouse.y -= position.top;
 
+			// No hovered button
+			_frameToDisplay = 0;
+
 			// Display the frame corresponding to the hovered button
 			for (uint i = 0; i < _buttonCount; i++) {
 				if (_buttons[i].contains(localMouse)) {
 					_frameToDisplay = i + 1;
-					return -1;
+					break;
 				}
 			}
-
-			// No hovered button
-			_frameToDisplay = 0;
 		} else if (event.type == Common::EVENT_LBUTTONDOWN) {
 			return _frameToDisplay - 1;
 		} else if (event.type == Common::EVENT_KEYDOWN) {
@@ -597,8 +593,8 @@ void Menu::createThumbnail(Graphics::Surface *big, Graphics::Surface *small) {
 	assert(big->format.bytesPerPixel == 3
 			&& small->format.bytesPerPixel == 3);
 
-	uint bigHeight = big->h - Scene::kTopBorderHeight - Scene::kBottomBorderHeight;
-	uint bigYOffset = Scene::kBottomBorderHeight;
+	uint bigHeight = big->h - Renderer::kTopBorderHeight - Renderer::kBottomBorderHeight;
+	uint bigYOffset = Renderer::kBottomBorderHeight;
 
 	uint8 *dst = (uint8 *)small->pixels;
 	for (uint i = 0; i < small->h; i++) {

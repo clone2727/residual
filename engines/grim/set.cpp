@@ -39,8 +39,7 @@
 namespace Grim {
 
 Set::Set(const Common::String &sceneName, Common::SeekableReadStream *data) :
-		PoolObject<Set, MKTAG('S', 'E', 'T', ' ')>(), _locked(false), _name(sceneName), _enableLights(false),
-		_lightsConfigured(false) {
+		_locked(false), _name(sceneName), _enableLights(false) {
 
 	char header[7];
 	data->read(header, 7);
@@ -53,13 +52,12 @@ Set::Set(const Common::String &sceneName, Common::SeekableReadStream *data) :
 	}
 }
 
-Set::Set() :
-	PoolObject<Set, MKTAG('S', 'E', 'T', ' ')>(), _cmaps(NULL) {
+Set::Set() : _cmaps(NULL) {
 
 }
 
 Set::~Set() {
-	if (_cmaps) {
+	if (_cmaps || g_grim->getGameType() == GType_MONKEY4) {
 		delete[] _cmaps;
 		for (int i = 0; i < _numSetups; ++i) {
 			delete _setups[i]._bkgndBm;
@@ -107,7 +105,6 @@ void Set::loadText(TextSplitter &ts) {
 		_setups[i].load(ts);
 	_currSetup = _setups;
 
-	_lightsConfigured = false;
 	_numSectors = -1;
 	_numLights = -1;
 	_lights = NULL;
@@ -123,8 +120,10 @@ void Set::loadText(TextSplitter &ts) {
 	ts.expectString("section: lights");
 	ts.scanString(" numlights %d", 1, &_numLights);
 	_lights = new Light[_numLights];
-	for (int i = 0; i < _numLights; i++)
+	for (int i = 0; i < _numLights; i++) {
 		_lights[i].load(ts);
+		_lightsList.push_back(&_lights[i]);
+	}
 
 	// Calculate the number of sectors
 	ts.expectString("section: sectors");
@@ -177,8 +176,10 @@ void Set::loadBinary(Common::SeekableReadStream *data) {
 
 	_numLights = data->readUint32LE();
 	_lights = new Light[_numLights];
-	for (int i = 0; i < _numLights; i++)
+	for (int i = 0; i < _numLights; i++) {
 		_lights[i].loadBinary(data);
+		_lightsList.push_back(&_lights[i]);
+	}
 
 	// bypass light stuff for now
 	_numLights = 0;
@@ -198,34 +199,34 @@ void Set::saveState(SaveGame *savedState) const {
 	for (int i = 0; i < _numCmaps; ++i) {
 		savedState->writeString(_cmaps[i]->getFilename());
 	}
-	savedState->writeLEUint32(_currSetup - _setups); // current setup id
-	savedState->writeLEUint32(_locked);
-	savedState->writeLEUint32(_enableLights);
-	savedState->writeLEUint32(_minVolume);
-	savedState->writeLEUint32(_maxVolume);
+	savedState->writeLEUint32((uint32)(_currSetup - _setups)); // current setup id
+	savedState->writeBool(_locked);
+	savedState->writeBool(_enableLights);
+	savedState->writeLESint32(_minVolume);
+	savedState->writeLESint32(_maxVolume);
 
 	savedState->writeLEUint32(_states.size());
 	for (StateList::const_iterator i = _states.begin(); i != _states.end(); ++i) {
-		savedState->writeLEUint32((*i)->getId());
+		savedState->writeLESint32((*i)->getId());
 	}
 
 	//Setups
-	savedState->writeLEUint32(_numSetups);
+	savedState->writeLESint32(_numSetups);
 	for (int i = 0; i < _numSetups; ++i) {
 		_setups[i].saveState(savedState);
 	}
 
 	//Sectors
-	savedState->writeLEUint32(_numSectors);
+	savedState->writeLESint32(_numSectors);
 	for (int i = 0; i < _numSectors; ++i) {
 		_sectors[i]->saveState(savedState);
 	}
 
 	//Lights
-	savedState->writeLEUint32(_numLights);
+	savedState->writeLESint32(_numLights);
 	for (int i = 0; i < _numLights; ++i) {
 		_lights[i].saveState(savedState);
-    }
+	}
 }
 
 bool Set::restoreState(SaveGame *savedState) {
@@ -238,21 +239,21 @@ bool Set::restoreState(SaveGame *savedState) {
 	}
 
 	int32 currSetupId = savedState->readLEUint32();
-	_locked           = savedState->readLEUint32();
-	_enableLights     = savedState->readLEUint32();
-	_minVolume        = savedState->readLEUint32();
-	_maxVolume        = savedState->readLEUint32();
+	_locked           = savedState->readBool();
+	_enableLights     = savedState->readBool();
+	_minVolume        = savedState->readLESint32();
+	_maxVolume        = savedState->readLESint32();
 
-	_numObjectStates = savedState->readLEUint32();
+	_numObjectStates = savedState->readLESint32();
 	_states.clear();
 	for (int i = 0; i < _numObjectStates; ++i) {
-		int32 id = savedState->readLEUint32();
+		int32 id = savedState->readLESint32();
 		ObjectState *o = ObjectState::getPool().getObject(id);
 		_states.push_back(o);
 	}
 
 	//Setups
-	_numSetups = savedState->readLEUint32();
+	_numSetups = savedState->readLESint32();
 	_setups = new Setup[_numSetups];
 	_currSetup = _setups + currSetupId;
 	for (int i = 0; i < _numSetups; ++i) {
@@ -260,7 +261,7 @@ bool Set::restoreState(SaveGame *savedState) {
 	}
 
     //Sectors
-	_numSectors = savedState->readLEUint32();
+	_numSectors = savedState->readLESint32();
 	if (_numSectors > 0) {
 		_sectors = new Sector*[_numSectors];
 		for (int i = 0; i < _numSectors; ++i) {
@@ -271,13 +272,12 @@ bool Set::restoreState(SaveGame *savedState) {
 		_sectors = NULL;
 	}
 
-	_numLights = savedState->readLEUint32();
+	_numLights = savedState->readLESint32();
 	_lights = new Light[_numLights];
-	for (int i = 0; i < _numLights; ++i) {
-		_lights[i].restoreState(savedState);;
+	for (int i = 0; i < _numLights; i++) {
+		_lights[i].restoreState(savedState);
+		_lightsList.push_back(&_lights[i]);
 	}
-
-	_lightsConfigured = false;
 
 	return true;
 }
@@ -289,7 +289,7 @@ void Set::Setup::load(TextSplitter &ts) {
 	_name = buf;
 
 	ts.scanString(" background %256s", 1, buf);
-	_bkgndBm = g_resourceloader->loadBitmap(buf);
+	_bkgndBm = Bitmap::create(buf);
 	if (!_bkgndBm) {
 		Debug::warning(Debug::Bitmaps | Debug::Sets,
 					   "Unable to load scene bitmap: %s\n", buf);
@@ -304,7 +304,7 @@ void Set::Setup::load(TextSplitter &ts) {
 		ts.scanString(" zbuffer %256s", 1, buf);
 		// Don't even try to load if it's the "none" bitmap
 		if (strcmp(buf, "<none>.lbm") != 0) {
-			_bkgndZBm = g_resourceloader->loadBitmap(buf);
+			_bkgndZBm = Bitmap::create(buf);
 			Debug::debug(Debug::Bitmaps | Debug::Sets,
 						 "Loading scene z-buffer bitmap: %s\n", buf);
 		}
@@ -339,7 +339,7 @@ void Set::Setup::loadBinary(Common::SeekableReadStream *data) {
 	data->read(fileName,fNameLen);
 
 	_bkgndZBm = NULL;
-	_bkgndBm = g_resourceloader->loadBitmap(fileName);
+	_bkgndBm = Bitmap::create(fileName);
 
 
 	data->read(_pos.getData(), 12);
@@ -351,6 +351,7 @@ void Set::Setup::loadBinary(Common::SeekableReadStream *data) {
 	data->read(&_nclip, 4);
 	data->read(&_fclip, 4);
 
+	delete[] fileName;
 }
 
 void Set::Setup::saveState(SaveGame *savedState) const {
@@ -359,16 +360,16 @@ void Set::Setup::saveState(SaveGame *savedState) const {
 
 	//bkgndBm
 	if (_bkgndBm) {
-		savedState->writeLEUint32(_bkgndBm->getId());
+		savedState->writeLESint32(_bkgndBm->getId());
 	} else {
-		savedState->writeLEUint32(0);
+		savedState->writeLESint32(0);
 	}
 
 	//bkgndZBm
 	if (_bkgndZBm) {
-		savedState->writeLEUint32(_bkgndZBm->getId());
+		savedState->writeLESint32(_bkgndZBm->getId());
 	} else {
-		savedState->writeLEUint32(0);
+		savedState->writeLESint32(0);
 	}
 
 	savedState->writeVector3d(_pos);
@@ -382,8 +383,8 @@ void Set::Setup::saveState(SaveGame *savedState) const {
 bool Set::Setup::restoreState(SaveGame *savedState) {
 	_name = savedState->readString();
 
-	_bkgndBm = Bitmap::getPool().getObject(savedState->readLEUint32());
-	_bkgndZBm = Bitmap::getPool().getObject(savedState->readLEUint32());
+	_bkgndBm = Bitmap::getPool().getObject(savedState->readLESint32());
+	_bkgndZBm = Bitmap::getPool().getObject(savedState->readLESint32());
 
 	_pos      = savedState->readVector3d();
 	_interest = savedState->readVector3d();
@@ -433,7 +434,7 @@ void Light::loadBinary(Common::SeekableReadStream *data) {
 void Light::saveState(SaveGame *savedState) const {
 	//name
 	savedState->writeString(_name);
-	savedState->writeLEBool(_enabled);
+	savedState->writeBool(_enabled);
 
 	//type
 	savedState->writeString(_type);
@@ -450,7 +451,7 @@ void Light::saveState(SaveGame *savedState) const {
 
 bool Light::restoreState(SaveGame *savedState) {
 	_name = savedState->readString();
-	_enabled = savedState->readLEBool();
+	_enabled = savedState->readBool();
 	_type = savedState->readString();
 
 	_pos           = savedState->readVector3d();
@@ -478,18 +479,31 @@ void Set::Setup::setupCamera() const {
 	g_driver->positionCamera(_pos, _interest);
 }
 
-void Set::setupLights() {
-	if (_lightsConfigured)
-		return;
-	_lightsConfigured = true;
+class Sorter {
+public:
+	Sorter(const Math::Vector3d &pos) {
+		_pos = pos;
+	}
+
+	bool operator()(Light *l1, Light *l2) const {
+		return (l1->_pos - _pos).getSquareMagnitude() < (l2->_pos - _pos).getSquareMagnitude();
+	}
+
+	Math::Vector3d _pos;
+};
+
+void Set::setupLights(const Math::Vector3d &pos) {
 	if (!_enableLights) {
 		g_driver->disableLights();
 		return;
 	}
 
+	// Sort the ligths from the nearest to the farthest to the pos.
+	Sorter sorter(pos);
+	Common::sort(_lightsList.begin(), _lightsList.end(), sorter);
+
 	int count = 0;
-	for (int i = 0; i < _numLights; i++) {
-		Light *l = &_lights[i];
+	foreach (Light *l, _lightsList) {
 		if (l->_enabled) {
 			g_driver->setupLight(l, count);
 			++count;
@@ -524,7 +538,6 @@ void Set::setSetup(int num) {
 	}
 	_currSetup = _setups + num;
 	g_grim->flagRefreshShadowMask(true);
-	_lightsConfigured = false;
 }
 
 void Set::drawBackground() const {
@@ -595,16 +608,11 @@ void Set::unshrinkBoxes() {
 	}
 }
 
-void Set::setLightsDirty() {
-	_lightsConfigured = false;
-}
-
 void Set::setLightIntensity(const char *light, float intensity) {
 	for (int i = 0; i < _numLights; ++i) {
 		Light &l = _lights[i];
 		if (l._name == light) {
 			l._intensity = intensity;
-			_lightsConfigured = false;
 			return;
 		}
 	}
@@ -613,7 +621,6 @@ void Set::setLightIntensity(const char *light, float intensity) {
 void Set::setLightIntensity(int light, float intensity) {
 	Light &l = _lights[light];
 	l._intensity = intensity;
-	_lightsConfigured = false;
 }
 
 void Set::setLightEnabled(const char *light, bool enabled) {
@@ -621,7 +628,6 @@ void Set::setLightEnabled(const char *light, bool enabled) {
 		Light &l = _lights[i];
 		if (l._name == light) {
 			l._enabled = enabled;
-			_lightsConfigured = false;
 			return;
 		}
 	}
@@ -630,7 +636,6 @@ void Set::setLightEnabled(const char *light, bool enabled) {
 void Set::setLightEnabled(int light, bool enabled) {
 	Light &l = _lights[light];
 	l._enabled = enabled;
-	_lightsConfigured = false;
 }
 
 void Set::setLightPosition(const char *light, const Math::Vector3d &pos) {
@@ -638,7 +643,6 @@ void Set::setLightPosition(const char *light, const Math::Vector3d &pos) {
 		Light &l = _lights[i];
 		if (l._name == light) {
 			l._pos = pos;
-			_lightsConfigured = false;
 			return;
 		}
 	}
@@ -647,14 +651,13 @@ void Set::setLightPosition(const char *light, const Math::Vector3d &pos) {
 void Set::setLightPosition(int light, const Math::Vector3d &pos) {
 	Light &l = _lights[light];
 	l._pos = pos;
-	_lightsConfigured = false;
 }
 
-void Set::setSoundPosition(const char *soundName, Math::Vector3d pos) {
+void Set::setSoundPosition(const char *soundName, const Math::Vector3d &pos) {
 	setSoundPosition(soundName, pos, _minVolume, _maxVolume);
 }
 
-void Set::setSoundPosition(const char *soundName, Math::Vector3d pos, int minVol, int maxVol) {
+void Set::setSoundPosition(const char *soundName, const Math::Vector3d &pos, int minVol, int maxVol) {
 	// TODO: The volume and pan needs to be updated when the setup changes.
 	Math::Vector3d cameraPos = _currSetup->_pos;
 	Math::Vector3d vector = pos - cameraPos;
@@ -689,6 +692,26 @@ Sector *Set::getSectorBase(int id) {
 		return _sectors[id];
 	else
 		return NULL;
+}
+
+Sector *Set::getSector(const Common::String &name) {
+	for (int i = 0; i < _numSectors; i++) {
+		Sector *sector = _sectors[i];
+		if (strstr(sector->getName(), name.c_str())) {
+			return sector;
+		}
+	}
+	return NULL;
+}
+
+Sector *Set::getSector(const Common::String &name, const Math::Vector3d &pos) {
+	for (int i = 0; i < _numSectors; i++) {
+		Sector *sector = _sectors[i];
+		if (strstr(sector->getName(), name.c_str()) && sector->isPointInSector(pos)) {
+			return sector;
+		}
+	}
+	return NULL;
 }
 
 void Set::setSoundParameters(int minVolume, int maxVolume) {

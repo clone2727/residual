@@ -22,7 +22,7 @@ namespace Grim {
 PointerId makeIdFromPointer(void *ptr) {
 	PointerId pointer;
 
-#ifdef TARGET_64BITS
+#ifdef SCUMM_64BITS
 	uint64 v = (uint64)ptr;
 	pointer.low = v & 0xffffffff;
 	pointer.hi = v >> 32;
@@ -37,7 +37,7 @@ PointerId makeIdFromPointer(void *ptr) {
 void *makePointerFromId(PointerId ptr) {
 	void *pointer;
 
-#ifdef TARGET_64BITS
+#ifdef SCUMM_64BITS
 	uint64 v = ptr.low | ((uint64)ptr.hi << 32);
 	pointer = (void *)v;
 #else
@@ -367,7 +367,7 @@ void lua_Save(SaveGame *savedState) {
 			savedState->writeLESint32(task->base);
 			savedState->writeLESint32(task->some_base);
 			savedState->writeLESint32(task->some_results);
-			savedState->writeLESint32(task->some_flag);
+			savedState->writeBool(task->some_flag);
 			int32 pcOffset = task->pc - task->tf->code;
 			savedState->writeLESint32(pcOffset);
 			savedState->writeLESint32(task->aux);
@@ -376,8 +376,8 @@ void lua_Save(SaveGame *savedState) {
 
 		savedState->writeLESint32(n);
 
-		savedState->writeLESint32(state->updated);
-		savedState->writeLESint32(state->paused);
+		savedState->writeBool(state->updated);
+		savedState->writeBool(state->paused);
 		savedState->writeLESint32(state->state_counter1);
 		savedState->writeLESint32(state->state_counter2);
 
@@ -400,7 +400,7 @@ void lua_Save(SaveGame *savedState) {
 			savedState->writeLESint32(state->Cblocks[i].num);
 		}
 
-		savedState->writeLESint32(state->id);
+		savedState->writeLEUint32(state->id);
 		saveObjectValue(&state->taskFunc, savedState);
 
 		state = state->next;

@@ -25,21 +25,27 @@
 
 namespace Myst3 {
 
-bool HotSpot::isPointInRectsCube(const Common::Point &p) {
+int32 HotSpot::isPointInRectsCube(const Common::Point &p) {
 	for (uint j = 0; j < rects.size(); j++) {
 		Common::Rect rect = Common::Rect(
 				rects[j].centerHeading - rects[j].width / 2,
 				rects[j].centerPitch - rects[j].height / 2,
 				rects[j].centerHeading + rects[j].width / 2,
 				rects[j].centerPitch + rects[j].height / 2);
-		if (rect.contains(p))
-			return true;
+
+		// Make sure heading is in the correct range
+		Common::Point lookAt = p;
+		if (rect.right > 360 && lookAt.x <= rect.right - 360)
+			lookAt.x += 360;
+
+		if (rect.contains(lookAt))
+			return j;
 	}
 
-	return false;
+	return -1;
 }
 
-bool HotSpot::isPointInRectsFrame(GameState *state, const Common::Point &p) {
+int32 HotSpot::isPointInRectsFrame(GameState *state, const Common::Point &p) {
 	for (uint j = 0; j < rects.size(); j++) {
 
 		int16 x = rects[j].centerPitch;
@@ -56,10 +62,20 @@ bool HotSpot::isPointInRectsFrame(GameState *state, const Common::Point &p) {
 		Common::Rect rect = Common::Rect(w, h);
 		rect.translate(x, y);
 		if (rect.contains(p))
-			return true;
+			return j;
 	}
 
-	return false;
+	return -1;
+}
+
+bool HotSpot::isEnabled(GameState *state, uint16 var) {
+	if (!state->evaluate(condition))
+		return false;
+
+	if (var == 0)
+		return cursor <= 13;
+	else
+		return cursor == var;
 }
 
 } /* namespace Myst3 */

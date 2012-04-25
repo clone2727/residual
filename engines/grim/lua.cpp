@@ -21,6 +21,7 @@
  */
 
 #include "common/endian.h"
+#include "common/foreach.h"
 #include "common/system.h"
 #include "common/events.h"
 
@@ -29,11 +30,9 @@
 #include "engines/grim/debug.h"
 #include "engines/grim/lua.h"
 #include "engines/grim/actor.h"
-#include "engines/grim/lipsync.h"
 #include "engines/grim/costume.h"
 #include "engines/grim/registry.h"
 #include "engines/grim/localize.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/grim.h"
 #include "engines/grim/savegame.h"
 #include "engines/grim/resource.h"
@@ -245,9 +244,18 @@ void LuaBase::registerOpcodes() {
 	luaL_openlib(baseOpcodes, ARRAYSIZE(baseOpcodes));
 }
 
-void LuaBase::boot() {
+void LuaBase::loadSystemScript() {
 	dofile("_system.lua");
+}
 
+bool LuaBase::supportedVersion() {
+	if (lua_isnil(lua_getglobal("game_needs_update")))
+		return true;
+	else
+		return false;
+}
+
+void LuaBase::boot() {
 	lua_pushnil();		// resumeSave
 	lua_pushnil();		// bootParam - not used in scripts
 	lua_call("BOOT");
@@ -370,8 +378,8 @@ Font *LuaBase::getfont(lua_Object obj) {
 	return Font::getPool().getObject(lua_getuserdata(obj));
 }
 
-PoolColor *LuaBase::getcolor(lua_Object obj) {
-	return PoolColor::getPool().getObject(lua_getuserdata(obj));
+Color LuaBase::getcolor(lua_Object obj) {
+	return Color(lua_getuserdata(obj));
 }
 
 PrimitiveObject *LuaBase::getprimitive(lua_Object obj) {
@@ -432,7 +440,7 @@ void LuaBase::parseSayLineTable(lua_Object paramObj, bool *background, int *vol,
 	lua_pushobject(lua_getref(refTextObjectX));
 	tableObj = lua_gettable();
 	if (lua_isnumber(tableObj)) {
-		if (*x)
+		if (x)
 			*x = (int)lua_getnumber(tableObj);
 	}
 
@@ -440,7 +448,7 @@ void LuaBase::parseSayLineTable(lua_Object paramObj, bool *background, int *vol,
 	lua_pushobject(lua_getref(refTextObjectY));
 	tableObj = lua_gettable();
 	if (lua_isnumber(tableObj)) {
-		if (*y)
+		if (y)
 			*y = (int)lua_getnumber(tableObj);
 	}
 
@@ -448,7 +456,7 @@ void LuaBase::parseSayLineTable(lua_Object paramObj, bool *background, int *vol,
 	lua_pushobject(lua_getref(refTextObjectBackground));
 	tableObj = lua_gettable();
 	if (tableObj) {
-		if (*background)
+		if (background)
 			*background = (int)lua_getnumber(tableObj);
 	}
 
@@ -456,7 +464,7 @@ void LuaBase::parseSayLineTable(lua_Object paramObj, bool *background, int *vol,
 	lua_pushobject(lua_getref(refTextObjectVolume));
 	tableObj = lua_gettable();
 	if (lua_isnumber(tableObj)) {
-		if (*vol)
+		if (vol)
 			*vol = (int)lua_getnumber(tableObj);
 	}
 
@@ -464,7 +472,7 @@ void LuaBase::parseSayLineTable(lua_Object paramObj, bool *background, int *vol,
 	lua_pushobject(lua_getref(refTextObjectPan));
 	tableObj = lua_gettable();
 	if (lua_isnumber(tableObj)) {
-		if (*pan)
+		if (pan)
 			*pan = (int)lua_getnumber(tableObj);
 	}
 }

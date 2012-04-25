@@ -53,22 +53,18 @@ class Model : public Object {
 public:
 	// Construct a 3D model from the given data.
 	Model(const Common::String &filename, Common::SeekableReadStream *data, CMap *cmap, Model *parent = NULL);
-	void loadBinary(Common::SeekableReadStream *data, CMap *cmap);
-	void loadText(TextSplitter *ts, CMap *cmap);
-	void loadEMI(Common::SeekableReadStream *data);
+
 	void reload(CMap *cmap);
 	void draw() const;
 	Material *findMaterial(const char *name, CMap *cmap) const;
 
 	~Model();
-
-	Common::String _fname;
-	ObjectPtr<CMap> _cmap;
+	const Common::String &getFilename() const { return _fname; }
+	const ObjectPtr<CMap> &getCMap() const { return _cmap; }
 
 	ModelNode *getHierarchy() const;
 	int getNumNodes() const { return _numHierNodes; }
 
-//private:
 	struct Geoset {
 		void loadBinary(Common::SeekableReadStream *data, Material *materials[]);
 		void loadText(TextSplitter *ts, Material *materials[]);
@@ -80,8 +76,13 @@ public:
 		Mesh *_meshes;
 	};
 
-	void loadMaterial(int index, CMap *cmap);
+//private:
+	void loadMaterial(int index);
+	void loadBinary(Common::SeekableReadStream *data);
+	void loadText(TextSplitter *ts);
 
+	Common::String _fname;
+	ObjectPtr<CMap> _cmap;
 	Model *_parent;
 	int _numMaterials;
 	char (*_materialNames)[32];
@@ -143,14 +144,14 @@ public:
 
 class ModelNode {
 public:
-	ModelNode() : _initialized(false) { }
+	ModelNode() : _initialized(false), _needsUpdate(true) { }
 	~ModelNode();
 	void loadBinary(Common::SeekableReadStream *data, ModelNode *hierNodes, const Model::Geoset *g);
 	void draw() const;
 	void getBoundingBox(int *x1, int *y1, int *x2, int *y2) const;
 	void addChild(ModelNode *child);
 	void removeChild(ModelNode *child);
-	void setMatrix(Math::Matrix4 matrix);
+	void setMatrix(const Math::Matrix4 &matrix);
 	void update();
 	void addSprite(Sprite *sprite);
 	void removeSprite(Sprite *sprite);
@@ -165,7 +166,7 @@ public:
 	 * discretely.
 	 */
 	int _flags;
-	/** 
+	/**
 	 * Each KeyFrameAnim has a type identifier. This type field is a bitmask which is ANDed againts
 	 * the type in the KeyFrameAnim to control which KeyFrameAnims animate on which nodes of the character.
 	 * This enables selectively controlling the animations to act only on certain bones.
@@ -174,11 +175,14 @@ public:
 	int _depth, _numChildren;
 	ModelNode *_parent, *_child, *_sibling;
 	Math::Vector3d _pos, _pivot;
+	// Specifies the bind pose YPR values for this node. This data
+	// is read from the model file and never altered (could be const).
 	Math::Angle _pitch, _yaw, _roll;
 	Math::Vector3d _animPos;
 	Math::Angle _animPitch, _animYaw, _animRoll;
 	bool _meshVisible, _hierVisible;
 	bool _initialized;
+	bool _needsUpdate;
 	Math::Matrix4 _matrix;
 	Math::Matrix4 _localMatrix;
 	Math::Matrix4 _pivotMatrix;

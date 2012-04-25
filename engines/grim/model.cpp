@@ -48,14 +48,12 @@ Model::Model(const Common::String &filename, Common::SeekableReadStream *data, C
 		Object(), _parent(parent), _numMaterials(0), _numGeosets(0), _cmap(cmap) {
 	_fname = filename;
 
-	if (g_grim->getGameType() == GType_MONKEY4) {
-		loadEMI(data);
-	} else if (data->readUint32BE() == MKTAG('L','D','O','M'))
-		loadBinary(data, cmap);
+	if (data->readUint32BE() == MKTAG('L','D','O','M'))
+		loadBinary(data);
 	else {
 		data->seek(0, SEEK_SET);
 		TextSplitter ts(data);
-		loadText(&ts, cmap);
+		loadText(&ts);
 	}
 
 	Math::Vector3d max;
@@ -107,39 +105,7 @@ Model::~Model() {
 	g_resourceloader->uncacheModel(this);
 }
 
-void Model::loadEMI(Common::SeekableReadStream *data) {
-	char name[64];
-
-	int nameLength = data->readUint32LE();
-	assert(nameLength < 64);
-
-	data->read(name, nameLength);
-
-	// skip over some unkown floats
-	data->seek(48, SEEK_CUR);
-
-	_numMaterials = data->readUint32LE();
-	_materials = new Material*[_numMaterials];
-	_materialNames = new char[_numMaterials][32];
-	for (int i = 0; i < _numMaterials; i++) {
-		nameLength = data->readUint32LE();
-		assert(nameLength < 32);
-
-		data->read(_materialNames[i], nameLength);
-		// I'm not sure what specialty mateials are, but they are handled differently.
-		if (memcmp(_materialNames[i], "specialty", 9) == 0) {
-			_materials[i] = 0;
-		} else {
-			loadMaterial(i, 0);
-		}
-		data->seek(4, SEEK_CUR);
-	}
-
-	data->seek(4, SEEK_CUR);
-
-
-}
-void Model::loadBinary(Common::SeekableReadStream *data, CMap *cmap) {
+void Model::loadBinary(Common::SeekableReadStream *data) {
 	char v3[4 * 3], f[4];
 	_numMaterials = data->readUint32LE();
 	_materials = new Material*[_numMaterials];
@@ -149,7 +115,7 @@ void Model::loadBinary(Common::SeekableReadStream *data, CMap *cmap) {
 		data->read(_materialNames[i], 32);
 		_materialsShared[i] = false;
 		_materials[i] = NULL;
-		loadMaterial(i, cmap);
+		loadMaterial(i);
 	}
 	data->seek(32, SEEK_CUR); // skip name
 	data->seek(4, SEEK_CUR);
@@ -170,7 +136,7 @@ void Model::loadBinary(Common::SeekableReadStream *data, CMap *cmap) {
 	_insertOffset = Math::Vector3d::get_vector3d(v3);
 }
 
-void Model::loadText(TextSplitter *ts, CMap *cmap) {
+void Model::loadText(TextSplitter *ts) {
 	ts->expectString("section: header");
 	int major, minor;
 	ts->scanString("3do %d.%d", 2, &major, &minor);
@@ -187,7 +153,7 @@ void Model::loadText(TextSplitter *ts, CMap *cmap) {
 
 		ts->scanString("%d: %32s", 2, &num, materialName);
 		strcpy(_materialNames[num], materialName);
-		loadMaterial(num, cmap);
+		loadMaterial(num);
 	}
 
 	ts->expectString("section: geometrydef");
@@ -258,32 +224,32 @@ ModelNode *Model::getHierarchy() const {
 }
 
 void Model::reload(CMap *cmap) {
+	_cmap = cmap;
 	// Load the new colormap
 	for (int i = 0; i < _numMaterials; i++) {
-		loadMaterial(i, cmap);
+		loadMaterial(i);
 	}
 	for (int i = 0; i < _numGeosets; i++)
 		_geosets[i].changeMaterials(_materials);
-	_cmap = cmap;
 }
 
-void Model::loadMaterial(int index, CMap *cmap) {
+void Model::loadMaterial(int index) {
 	Material *mat = NULL;
 	if (!_materialsShared[index]) {
 		mat = _materials[index];
 	}
 	_materials[index] = NULL;
 	if (_parent) {
-		_materials[index] = _parent->findMaterial(_materialNames[index], cmap);
+		_materials[index] = _parent->findMaterial(_materialNames[index], _cmap);
 		if (_materials[index]) {
 			_materialsShared[index] = true;
 		}
 	}
 	if (!_materials[index]) {
-		if (mat && cmap->getFilename() == _cmap->getFilename()) {
+		if (mat && _cmap->getFilename() == _cmap->getFilename()) {
 			_materials[index] = mat;
 		} else {
-			_materials[index] = g_resourceloader->loadMaterial(_materialNames[index], cmap);
+			_materials[index] = g_resourceloader->loadMaterial(_materialNames[index], _cmap);
 		}
 		_materialsShared[index] = false;
 	}
@@ -383,8 +349,14 @@ void MeshFace::changeMaterial(Material *material) {
 }
 
 void MeshFace::draw(float *vertices, float *vertNormals, float *textureVerts) const {
+	if (_light == 0 && !g_driver->isShadowModeActive())
+		g_driver->disableLights();
+
 	_material->select();
 	g_driver->drawModelFace(this, vertices, vertNormals, textureVerts);
+
+	if (_light == 0 && !g_driver->isShadowModeActive())
+		g_driver->enableLights();
 }
 
 /**
@@ -501,8 +473,7 @@ void Mesh::loadText(TextSplitter *ts, Material* materials[]) {
 		if (ts->isEof())
 			error("Expected face data, got EOF");
 
-		if (sscanf(ts->getCurrentLine(), " %d: %d %x %d %d %d %f %d%n", &num, &materialid, &type, &geo, &light, &tex, &extralight, &verts, &readlen) < 8)
-			error("Expected face data, got '%s'", ts->getCurrentLine());
+		ts->scanStringNoNewLine(" %d: %d %x %d %d %d %f %d%n", 8, &num, &materialid, &type, &geo, &light, &tex, &extralight, &verts, &readlen);
 
 		assert(materialid != -1);
 		_materialid[num] = materialid;
@@ -518,10 +489,7 @@ void Mesh::loadText(TextSplitter *ts, Material* materials[]) {
 		for (int j = 0; j < verts; j++) {
 			int readlen2;
 
-			if (sscanf(ts->getCurrentLine() + readlen, " %d, %d%n", &_faces[num]._vertices[j], &_faces[num]._texVertices[j], &readlen2) < 2)
-				error("Could not read vertex indices in line '%s'",
-
-			ts->getCurrentLine());
+			ts->scanStringAtOffsetNoNewLine(readlen, " %d, %d%n", 2, &_faces[num]._vertices[j], &_faces[num]._texVertices[j], &readlen2);
 			readlen += readlen2;
 		}
 		ts->nextLine();
@@ -703,7 +671,7 @@ void ModelNode::removeChild(ModelNode *child) {
 	}
 }
 
-void ModelNode::setMatrix(Math::Matrix4 matrix) {
+void ModelNode::setMatrix(const Math::Matrix4 &matrix) {
 	_matrix = matrix;
 	if (_sibling)
 		_sibling->setMatrix(matrix);
@@ -713,7 +681,7 @@ void ModelNode::update() {
 	if (!_initialized)
 		return;
 
-	if (_hierVisible) {
+	if (_hierVisible && _needsUpdate) {
 		Math::Vector3d animPos = _pos + _animPos;
 		Math::Angle animPitch = _pitch + _animPitch;
 		Math::Angle animYaw = _yaw + _animYaw;
@@ -735,6 +703,8 @@ void ModelNode::update() {
 			_child->setMatrix(_matrix);
 			_child->update();
 		}
+
+		_needsUpdate = false;
 	}
 
 	if (_sibling) {

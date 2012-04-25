@@ -38,12 +38,13 @@
 #include <SDL_syswm.h> // For setting the icon
 
 #include "backends/platform/sdl/win32/win32.h"
+#include "backends/saves/windows/windows-saves.h"
 #include "backends/fs/windows/windows-fs-factory.h"
 #include "backends/taskbar/win32/win32-taskbar.h"
 
 #include "common/memstream.h"
 
-#define DEFAULT_CONFIG_FILE "residual.ini"
+#define DEFAULT_CONFIG_FILE "residualvm.ini"
 
 void OSystem_Win32::init() {
 	// Initialize File System Factory
@@ -73,6 +74,10 @@ void OSystem_Win32::initBackend() {
 	} else {
 		FreeConsole();
 	}
+
+	// Create the savefile manager
+	if (_savefileManager == 0)
+		_savefileManager = new WindowsSaveFileManager();
 
 	// Invoke parent implementation of this method
 	OSystem_SDL::initBackend();
@@ -170,7 +175,7 @@ Common::String OSystem_Win32::getDefaultConfigFileName() {
 			}
 		}
 
-		strcat(configFile, "\\Residual");
+		strcat(configFile, "\\ResidualVM");
 		if (!CreateDirectory(configFile, NULL)) {
 			if (GetLastError() != ERROR_ALREADY_EXISTS)
 				error("Cannot create ResidualVM application data folder");

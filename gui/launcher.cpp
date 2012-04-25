@@ -24,6 +24,7 @@
 #include "common/config-manager.h"
 #include "common/events.h"
 #include "common/fs.h"
+#include "common/gui_options.h"
 #include "common/util.h"
 #include "common/system.h"
 #include "common/translation.h"
@@ -90,7 +91,7 @@ public:
 
 protected:
 	bool tryInsertChar(byte c, int pos) {
-		if (isalnum(c) || c == '-' || c == '_') {
+		if (Common::isAlnum(c) || c == '-' || c == '_') {
 			_editString.insertChar(c, pos);
 			return true;
 		}
@@ -144,11 +145,28 @@ protected:
 	CheckboxWidget *_globalMIDIOverride;
 	CheckboxWidget *_globalMT32Override;
 	CheckboxWidget *_globalVolumeOverride;
+
+	ExtraGuiOptions _engineOptions;
 };
 
 EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 	: OptionsDialog(domain, "GameOptions") {
-
+	// Retrieve all game specific options.
+	const EnginePlugin *plugin = 0;
+	// To allow for game domains without a gameid.
+	// TODO: Is it intentional that this is still supported?
+	String gameId(ConfMan.get("gameid", domain));
+	if (gameId.empty())
+		gameId = domain;
+	// Retrieve the plugin, since we need to access the engine's MetaEngine
+	// implementation.
+	EngineMan.findGame(gameId, &plugin);
+	if (plugin) {
+		_engineOptions = (*plugin)->getExtraGuiOptions(domain);
+	} else {
+		warning("Plugin for target \"%s\" not found! Game specific settings might be missing", domain.c_str());
+	}
+	
 	// GAME: Path to game data (r/o), extra data (r/o), and save data (r/w)
 	String gamePath(ConfMan.get("path", _domain));
 	String extraPath(ConfMan.get("extrapath", _domain));
@@ -207,7 +225,16 @@ EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 	}
 
 	//
-	// 2) The graphics tab
+	// 2) The engine tab (shown only if there are custom engine options)
+	//
+	if (_engineOptions.size() > 0) {
+		tab->addTab(_("Engine"));
+
+		addEngineControls(tab, "GameOptions_Engine.", _engineOptions);
+	}
+
+	//
+	// 3) The graphics tab
 	//
 	_graphicsTabId = tab->addTab(g_system->getOverlayWidth() > 320 ? _("Graphics") : _("GFX"));
 
@@ -219,7 +246,7 @@ EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 	addGraphicControls(tab, "GameOptions_Graphics.");
 
 	//
-	// 3) The audio tab
+	// 4) The audio tab
 	//
 	tab->addTab(_("Audio"));
 
@@ -232,7 +259,7 @@ EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 	addSubtitleControls(tab, "GameOptions_Audio.");
 
 	//
-	// 4) The volume tab
+	// 5) The volume tab
 	//
 	if (g_system->getOverlayWidth() > 320)
 		tab->addTab(_("Volume"));
@@ -245,9 +272,9 @@ EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 		_globalVolumeOverride = new CheckboxWidget(tab, "GameOptions_Volume.EnableTabCheckbox", _c("Override global volume settings", "lowres"), 0, kCmdGlobalVolumeOverride);
 
 	addVolumeControls(tab, "GameOptions_Volume.");
-
+/* ResidualVM: do not enable midi
 	//
-	// 5) The MIDI tab
+	// 6) The MIDI tab
 	//
 	if (!_guioptions.contains(GUIO_NOMIDI)) {
 		tab->addTab(_("MIDI"));
@@ -261,7 +288,7 @@ EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 	}
 
 	//
-	// 6) The MT-32 tab
+	// 7) The MT-32 tab
 	//
 	if (!_guioptions.contains(GUIO_NOMIDI)) {
 		tab->addTab(_("MT-32"));
@@ -272,10 +299,10 @@ EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 			_globalMT32Override = new CheckboxWidget(tab, "GameOptions_MT32.EnableTabCheckbox", _c("Override global MT-32 settings", "lowres"), 0, kCmdGlobalMT32Override);
 
 		addMT32Controls(tab, "GameOptions_MT32.");
-	}
+	}*/
 
 	//
-	// 7) The Paths tab
+	// 8) The Paths tab
 	//
 	if (g_system->getOverlayWidth() > 320)
 		tab->addTab(_("Paths"));
@@ -310,7 +337,6 @@ EditGameDialog::EditGameDialog(const String &domain, const String &desc)
 
 	_savePathClearButton = addClearButton(tab, "GameOptions_Paths.SavePathClearButton", kCmdSavePathClear);
 
-
 	// Activate the first tab
 	tab->setActiveTab(0);
 	_tabWidget = tab;
@@ -341,8 +367,7 @@ void EditGameDialog::open() {
 	e = ConfMan.hasKey("gfx_mode", _domain) ||
 		ConfMan.hasKey("render_mode", _domain) ||
 		ConfMan.hasKey("fullscreen", _domain) ||
-		ConfMan.hasKey("aspect_ratio", _domain) ||
-		ConfMan.hasKey("disable_dithering", _domain);
+		ConfMan.hasKey("aspect_ratio", _domain);
 	_globalGraphicsOverride->setState(e);
 
 	e = ConfMan.hasKey("music_driver", _domain) ||
@@ -356,7 +381,7 @@ void EditGameDialog::open() {
 		ConfMan.hasKey("sfx_volume", _domain) ||
 		ConfMan.hasKey("speech_volume", _domain);
 	_globalVolumeOverride->setState(e);
-
+/*
 	if (!_guioptions.contains(GUIO_NOMIDI)) {
 		e = ConfMan.hasKey("soundfont", _domain) ||
 			ConfMan.hasKey("multi_midi", _domain) ||
@@ -369,7 +394,7 @@ void EditGameDialog::open() {
 			ConfMan.hasKey("enable_gs", _domain);
 		_globalMT32Override->setState(e);
 	}
-
+*/
 	// TODO: game path
 
 	const Common::Language lang = Common::parseLanguage(ConfMan.get("language", _domain));
@@ -385,6 +410,19 @@ void EditGameDialog::open() {
 		_langPopUp->setEnabled(false);
 	}
 
+	// Set the state of engine-specific checkboxes
+	for (uint j = 0; j < _engineOptions.size(); ++j) {
+		// The default values for engine-specific checkboxes are not set when
+		// ScummVM starts, as this would require us to load and poll all of the
+		// engine plugins on startup. Thus, we set the state of each custom
+		// option checkbox to what is specified by the engine plugin, and
+		// update it only if a value has been set in the configuration of the
+		// currently selected game.
+		bool isChecked = _engineOptions[j].defaultState;
+		if (ConfMan.hasKey(_engineOptions[j].configOption, _domain))
+			isChecked = ConfMan.getBool(_engineOptions[j].configOption, _domain);
+		_engineCheckboxes[j]->setState(isChecked);
+	}
 
 	const Common::PlatformDescription *p = Common::g_platforms;
 	const Common::Platform platform = Common::parsePlatform(ConfMan.get("platform", _domain));
@@ -428,6 +466,11 @@ void EditGameDialog::close() {
 			ConfMan.removeKey("platform", _domain);
 		else
 			ConfMan.set("platform", Common::getPlatformCode(platform), _domain);
+
+		// Set the state of engine-specific checkboxes
+		for (uint i = 0; i < _engineOptions.size(); i++) {
+			ConfMan.setBool(_engineOptions[i].configOption, _engineCheckboxes[i]->getState(), _domain);
+		}
 	}
 	OptionsDialog::close();
 }
@@ -551,7 +594,7 @@ void EditGameDialog::handleCommand(CommandSender *sender, uint32 cmd, uint32 dat
 #pragma mark -
 
 LauncherDialog::LauncherDialog()
-	: Dialog(0, 0, 640, 400) {
+	: Dialog(0, 0, 640, 400) {//ResidualVM specific
 	_backgroundType = GUI::ThemeEngine::kDialogBackgroundMain;
 
 	const int screenW = g_system->getOverlayWidth();
@@ -567,12 +610,12 @@ LauncherDialog::LauncherDialog()
 		_logo->useThemeTransparency(true);
 		_logo->setGfx(g_gui.theme()->getImageSurface(ThemeEngine::kImageLogo));
 
-		new StaticTextWidget(this, "Launcher.Version", gResidualVMVersionDate);
+		new StaticTextWidget(this, "Launcher.Version", gScummVMVersionDate);
 	} else
-		new StaticTextWidget(this, "Launcher.Version", gResidualVMFullVersion);
+		new StaticTextWidget(this, "Launcher.Version", gScummVMFullVersion);
 #else
 	// Show ScummVM version
-	new StaticTextWidget(this, "Launcher.Version", gResidualVMFullVersion);
+	new StaticTextWidget(this, "Launcher.Version", gScummVMFullVersion);
 #endif
 
 	new ButtonWidget(this, "Launcher.QuitButton", _("~Q~uit"), _("Quit ResidualVM"), kQuitCmd);
@@ -1084,10 +1127,10 @@ void LauncherDialog::updateButtons() {
 void LauncherDialog::reflowLayout() {
 #ifndef DISABLE_FANCY_THEMES
 	if (g_gui.xmlEval()->getVar("Globals.ShowLauncherLogo") == 1 && g_gui.theme()->supportsImages()) {
-		StaticTextWidget *ver = (StaticTextWidget*)findWidget("Launcher.Version");
+		StaticTextWidget *ver = (StaticTextWidget *)findWidget("Launcher.Version");
 		if (ver) {
 			ver->setAlign((Graphics::TextAlign)g_gui.xmlEval()->getVar("Launcher.Version.Align", Graphics::kTextAlignCenter));
-			ver->setLabel(gResidualVMVersionDate);
+			ver->setLabel(gScummVMVersionDate);
 		}
 
 		if (!_logo)
@@ -1095,10 +1138,10 @@ void LauncherDialog::reflowLayout() {
 		_logo->useThemeTransparency(true);
 		_logo->setGfx(g_gui.theme()->getImageSurface(ThemeEngine::kImageLogo));
 	} else {
-		StaticTextWidget *ver = (StaticTextWidget*)findWidget("Launcher.Version");
+		StaticTextWidget *ver = (StaticTextWidget *)findWidget("Launcher.Version");
 		if (ver) {
 			ver->setAlign((Graphics::TextAlign)g_gui.xmlEval()->getVar("Launcher.Version.Align", Graphics::kTextAlignCenter));
-			ver->setLabel(gResidualVMFullVersion);
+			ver->setLabel(gScummVMFullVersion);
 		}
 
 		if (_logo) {

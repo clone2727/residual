@@ -137,7 +137,8 @@ static const int8 blocky8_table[] = {
 	 34,  26, -18,  28, -32,  29,  16,  29, -11,  31,
 	  9,  32,  29,  32,  -4,  33,   2,  33, -26,  34,
 	 23,  36, -19,  39,  16,  40, -13,  41,   9,  42,
-	 -6,  43,   1,  43,   0,   0,   0,   0,   0,   0
+	 -6,  43,   1,  43,   0,   0,   0,   0,   0,   0,
+	  0,   0,   0
 };
 
 void Blocky8::makeTablesInterpolation(int param) {
@@ -340,11 +341,11 @@ void Blocky8::makeTables47(int width) {
 
 extern "C" {
 #ifndef IPHONE
-#define ARM_Smush_decode2 _ARM_Smush_decode2
+#define ARM_Blocky8_decode2 _ARM_Blocky8_decode2
 #endif
 }
 
-extern "C" void ARM_Smush_decode2(      byte  *dst,
+extern "C" void ARM_Blocky8_decode2(      byte  *dst,
                                   const byte  *src,
                                         int    width,
                                         int    height,
@@ -356,7 +357,7 @@ extern "C" void ARM_Smush_decode2(      byte  *dst,
                                         byte  *_tableSmall);
 
 #define decode2(SRC,DST,WIDTH,HEIGHT,PARAM) \
- ARM_Smush_decode2(SRC,DST,WIDTH,HEIGHT,PARAM,_table,_tableBig, \
+ ARM_Blocky8_decode2(SRC,DST,WIDTH,HEIGHT,PARAM,_table,_tableBig, \
                    _offset1,_offset2,_tableSmall)
 
 #else

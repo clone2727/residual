@@ -21,9 +21,9 @@
  */
 
 #include "common/endian.h"
+#include "common/stream.h"
 
 #include "engines/grim/resource.h"
-#include "engines/grim/colormap.h"
 
 #include "engines/grim/imuse/imuse_sndmgr.h"
 #include "engines/grim/imuse/imuse_mcmp_mgr.h"

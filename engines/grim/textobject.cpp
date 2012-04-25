@@ -25,7 +25,7 @@
 #include "engines/grim/textobject.h"
 #include "engines/grim/savegame.h"
 #include "engines/grim/lua.h"
-#include "engines/grim/colormap.h"
+#include "engines/grim/lua/lua.h"
 #include "engines/grim/font.h"
 #include "engines/grim/gfx_base.h"
 #include "engines/grim/color.h"
@@ -34,18 +34,18 @@ namespace Grim {
 
 TextObjectCommon::TextObjectCommon() :
 	_x(0), _y(0), _fgColor(0), _justify(0), _width(0), _height(0),
-	_font(NULL), _duration(0) {
+	_font(NULL), _duration(0), _positioned(false) {
 }
 
 TextObject::TextObject(bool blastDraw, bool isSpeech) :
-		PoolObject<TextObject, MKTAG('T', 'E', 'X', 'T')>(), TextObjectCommon(), _numberLines(1),
+		TextObjectCommon(), _numberLines(1),
 		_maxLineWidth(0), _lines(0), _userData(0), _created(false) {
 	_blastDraw = blastDraw;
 	_isSpeech = isSpeech;
 }
 
 TextObject::TextObject() :
-	PoolObject<TextObject, MKTAG('T', 'E', 'X', 'T')>(), TextObjectCommon(), _maxLineWidth(0), _lines(NULL) {
+	TextObjectCommon(), _maxLineWidth(0), _lines(NULL) {
 
 }
 
@@ -68,7 +68,7 @@ void TextObject::reset() {
 }
 
 void TextObject::saveState(SaveGame *state) const {
-	state->writeLEUint32(_fgColor->getId());
+	state->writeColor(_fgColor);
 
 	state->writeLESint32(_x);
 	state->writeLESint32(_y);
@@ -78,19 +78,17 @@ void TextObject::saveState(SaveGame *state) const {
 	state->writeLESint32(_numberLines);
 	state->writeLESint32(_duration);
 
-	//SAVECHANGE: Remove the next line with the next save version
-	state->writeLESint32(0);
-	state->writeLESint32(_blastDraw);
-	state->writeLESint32(_isSpeech);
+	state->writeBool(_blastDraw);
+	state->writeBool(_isSpeech);
 	state->writeLESint32(_elapsedTime);
 
-	state->writeLEUint32(_font->getId());
+	state->writeLESint32(_font->getId());
 
 	state->writeString(_textID);
 }
 
 bool TextObject::restoreState(SaveGame *state) {
-	_fgColor = PoolColor::getPool().getObject(state->readLEUint32());
+	_fgColor = state->readColor();
 
 	_x            = state->readLESint32();
 	_y            = state->readLESint32();
@@ -100,13 +98,11 @@ bool TextObject::restoreState(SaveGame *state) {
 	_numberLines  = state->readLESint32();
 	_duration     = state->readLESint32();
 
-	//SAVECHANGE: Remove the next line with the next save version
-	state->readLESint32();
-	_blastDraw    = state->readLESint32();
-	_isSpeech     = state->readLESint32();
+	_blastDraw    = state->readBool();
+	_isSpeech     = state->readBool();
 	_elapsedTime  = state->readLESint32();
 
-	_font = Font::getPool().getObject(state->readLEUint32());
+	_font = Font::getPool().getObject(state->readLESint32());
 
 	_textID = state->readString();
 
@@ -149,7 +145,41 @@ void TextObject::destroy() {
 	}
 }
 
+void TextObject::reposition() {
+	if (_positioned)
+		return;
+
+	_positioned = true;
+	_posX = _x;
+	_posY = _y;
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		if (_isSpeech || abs(_posX) >= 320 || abs(_posY) >= 240) {
+			_posY = _posY > 0 ? 480 - _posY : abs(_posY);
+			if (_posX < 0)
+				_posX = _posX + 640;
+			if (_justify == CENTER && _posX == 0)
+				_posX = 320;
+		} else if (g_grim->getMode() == GrimEngine::OverworldMode) {
+			_posX = 320 + _posX;
+			_posY = 240 - _posY;
+		} else {
+			_posX = 320 + _posX;
+			_posY = abs(_posY);
+		}
+		Debug::debug(Debug::TextObjects, "Repositioning (%d, %d) -> (%d, %d)", _x, _y, _posX, _posY);
+		assert(0 <= _posX && _posX <= 640);
+		assert(0 <= _posY && _posY <= 480);
+	}
+}
+
 void TextObject::setupText() {
+	if (_font == NULL) {
+		// use lua_error her and not a regular error as this should be recoverable
+		// and it is most likly a script error, but it will still help to see the
+		// lua stack trace
+		lua_error("TextObject::setupText font null");
+	}
+
 	Common::String msg = LuaBase::instance()->parseMsgText(_textID.c_str(), NULL);
 	Common::String message;
 
@@ -168,17 +198,7 @@ void TextObject::setupText() {
 		return;
 	}
 
-	// In EMI most stuff seems to be relitive to the center,
-	// but sometimes it is not so I catch that with _x being over 320.
-	// This is probably not the corrent way to do it though.
-	if (g_grim->getGameType() == GType_MONKEY4) {
-		if (_x > 320) {
-			_y = -_y;
-		} else {
-			_x += 320;
-			_y = 240 - _y;
-		}
-	}
+	reposition();
 
 	// format the output message to incorporate line wrapping
 	// (if necessary) for the text object
@@ -188,10 +208,10 @@ void TextObject::setupText() {
 	// If the speaker is too close to the edge of the screen we have to make
 	// some room for the subtitles.
 	if (_isSpeech){
-		if (_x < SCREEN_MARGIN) {
-			_x = SCREEN_MARGIN;
-		} else if (SCREEN_WIDTH - _x < SCREEN_MARGIN) {
-			_x = SCREEN_WIDTH - SCREEN_MARGIN;
+		if (_posX < SCREEN_MARGIN) {
+			_posX = SCREEN_MARGIN;
+		} else if (SCREEN_WIDTH - _posX < SCREEN_MARGIN) {
+			_posX = SCREEN_WIDTH - SCREEN_MARGIN;
 		}
 	}
 
@@ -200,11 +220,11 @@ void TextObject::setupText() {
 	// with GrimE.
 	int maxWidth = 0;
 	if (_justify == CENTER) {
-		maxWidth = 2 * MIN(_x, SCREEN_WIDTH - _x);
+		maxWidth = 2 * MIN(_posX, SCREEN_WIDTH - _posX);
 	} else if (_justify == LJUSTIFY) {
-		maxWidth = SCREEN_WIDTH - _x;
+		maxWidth = SCREEN_WIDTH - _posX;
 	} else if (_justify == RJUSTIFY) {
-		maxWidth = _x;
+		maxWidth = _posX;
 	}
 
 	// We break the message to lines not longer than maxWidth
@@ -261,9 +281,9 @@ void TextObject::setupText() {
 	// printed further down the screen.
 	const int SCREEN_TOP_MARGIN = 16;
 	if (_isSpeech) {
-		_y -= _numberLines * _font->getHeight();
-		if (_y < SCREEN_TOP_MARGIN) {
-			_y = SCREEN_TOP_MARGIN;
+		_posY -= _numberLines * _font->getHeight();
+		if (_posY < SCREEN_TOP_MARGIN) {
+			_posY = SCREEN_TOP_MARGIN;
 		}
 	}
 
@@ -291,11 +311,11 @@ void TextObject::setupText() {
 }
 
 int TextObject::getLineX(int line) {
-	int x = _x;
+	int x = _posX;
 	if (_justify == CENTER)
-		x = _x - (_font->getStringLength(_lines[line]) / 2);
+		x = _posX - (_font->getStringLength(_lines[line]) / 2);
 	else if (_justify == RJUSTIFY)
-		x = _x - getBitmapWidth();
+		x = _posX - getBitmapWidth();
 
 	if (x < 0)
 		x = 0;
@@ -303,20 +323,20 @@ int TextObject::getLineX(int line) {
 }
 
 int TextObject::getLineY(int line) {
-	int y = _y;
+	int y = _posY;
 	if (_blastDraw)
-		y = _y + 5;
+		y = _posY + 5;
 	else {
 		if (_font->getHeight() == 21) // talk_font,verb_font
-			y = _y - 6;
+			y = _posY - 6;
 		else if (_font->getHeight() == 26) // special_font
-			y = _y - 12;
+			y = _posY - 12;
 		else if (_font->getHeight() == 13) // computer_font
-			y = _y - 6;
+			y = _posY - 6;
 		else if (_font->getHeight() == 19) // pt_font
-			y = _y - 9;
+			y = _posY - 9;
 		else
-			y = _y;
+			y = _posY;
 	}
 	if (y < 0)
 		y = 0;

@@ -25,16 +25,17 @@
 #include "common/endian.h"
 #include "common/system.h"
 
+#include "graphics/pixelbuffer.h"
+#include "graphics/colormasks.h"
+
 #include "math/matrix3.h"
 
 #include "engines/grim/debug.h"
 #include "engines/grim/lua_v1.h"
 #include "engines/grim/actor.h"
-#include "engines/grim/lipsync.h"
 #include "engines/grim/costume.h"
 #include "engines/grim/registry.h"
 #include "engines/grim/localize.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/grim.h"
 #include "engines/grim/savegame.h"
 #include "engines/grim/resource.h"
@@ -48,18 +49,7 @@
 #include "engines/grim/lua/lauxlib.h"
 #include "engines/grim/lua/luadebug.h"
 
-// Windows.h badness: Remove #defines to the following Win32 API MultiByte/Unicode functions.
-#ifdef GetDiskFreeSpace
-#undef GetDiskFreeSpace
-#endif
-
-#ifdef PlaySound
-#undef PlaySound
-#endif
-
 namespace Grim {
-
-#define strmatch(src, dst)		(strlen(src) == strlen(dst) && strcmp(src, dst) == 0)
 
 byte clamp_color(int c) {
 	if (c < 0)
@@ -90,7 +80,7 @@ void Lua_V1::PrintDebug() {
 		if (!lua_isstring(strObj))
 			return;
 		msg += Common::String(lua_getstring(strObj));
-		debug(msg.c_str());
+		debug("%s", msg.c_str());
 	}
 }
 
@@ -103,7 +93,7 @@ void Lua_V1::PrintError() {
 		if (!lua_isstring(strObj))
 			return;
 		msg += Common::String(lua_getstring(strObj));
-		debug(msg.c_str());
+		debug("%s", msg.c_str());
 	}
 }
 
@@ -116,7 +106,7 @@ void Lua_V1::PrintWarning() {
 		if (!lua_isstring(strObj))
 			return;
 		msg += Common::String(lua_getstring(strObj));
-		debug(msg.c_str());
+		debug("%s", msg.c_str());
 	}
 }
 
@@ -143,7 +133,6 @@ void Lua_V1::FunctionName() {
 		break;
 	default:
 		{
-//             cout<<(void*)filename<<endl;
 			if (line == 0)
 				sprintf(buf, "main of %.100s", filename);
 			else if (line < 0)
@@ -169,7 +158,7 @@ void Lua_V1::CheckForFile() {
 		return;
 
 	const char *filename = lua_getstring(strObj);
-	pushbool(g_resourceloader->getFileExists(filename));
+	pushbool(SearchMan.hasFile(filename));
 }
 
 void Lua_V1::MakeColor() {
@@ -193,16 +182,16 @@ void Lua_V1::MakeColor() {
 	else
 		b = clamp_color((int)lua_getnumber(bObj));
 
-	PoolColor *c = new PoolColor (r, g ,b);
-	lua_pushusertag(c->getId(), MKTAG('C','O','L','R'));
+	Color c(r, g, b);
+	lua_pushusertag(c.toEncodedValue(), MKTAG('C','O','L','R'));
 }
 
 void Lua_V1::GetColorComponents() {
 	lua_Object colorObj = lua_getparam(1);
-	Color *c = getcolor(colorObj);
-	lua_pushnumber(c->getRed());
-	lua_pushnumber(c->getGreen());
-	lua_pushnumber(c->getBlue());
+	Color c(getcolor(colorObj));
+	lua_pushnumber(c.getRed());
+	lua_pushnumber(c.getGreen());
+	lua_pushnumber(c.getBlue());
 }
 
 void Lua_V1::ReadRegistryValue() {
@@ -213,12 +202,19 @@ void Lua_V1::ReadRegistryValue() {
 		return;
 	}
 	const char *key = lua_getstring(keyObj);
-	const char *val = g_registry->get(key, "");
-	// this opcode can return lua_pushnumber due binary nature of some registry entries, but not implemented
-	if (val[0] == 0)
-		lua_pushnil();
-	else
-		lua_pushstring(const_cast<char *>(val));
+
+	Registry::ValueType type = g_registry->getValueType(key);
+	switch (type) {
+	case Registry::String:
+		lua_pushstring(g_registry->getString(key).c_str());
+		break;
+	case Registry::Integer:
+		lua_pushnumber(g_registry->getInt(key));
+		break;
+	case Registry::Boolean:
+		pushbool(g_registry->getBool(key));
+		break;
+	}
 }
 
 void Lua_V1::WriteRegistryValue() {
@@ -228,13 +224,17 @@ void Lua_V1::WriteRegistryValue() {
 	if (!lua_isstring(keyObj))
 		return;
 
-	if (!lua_isstring(valObj))
+	const char *key = lua_getstring(keyObj);
+	if (strcmp(key, "GrimMannyState") == 0) //This isn't used. it's probably a left over from testing phase.
 		return;
 
-	// this opcode can get lua_getnumber due binary nature of some registry entries, but not implemented
-	const char *key = lua_getstring(keyObj);
-	const char *val = lua_getstring(valObj);
-	g_registry->set(key, val);
+	if (lua_isstring(valObj)) {
+		const char *val = lua_getstring(valObj);
+		g_registry->setString(key, val);
+	} else if (lua_isnumber(valObj)) {
+		int val = (int)lua_getnumber(valObj);
+		g_registry->setInt(key, val);
+	}
 }
 
 void Lua_V1::GetAngleBetweenVectors() {
@@ -276,7 +276,7 @@ void Lua_V1::GetAngleBetweenVectors() {
 	vec1.normalize();
 	vec2.normalize();
 
-	float dot = vec1.getDotProduct(vec2);
+	float dot = vec1.dotProduct(vec2);
 	float angle = 90.0f - (180.0f * asin(dot)) / LOCAL_PI;
 	if (angle < 0)
 		angle = -angle;
@@ -290,18 +290,13 @@ void Lua_V1::Is3DHardwareEnabled() {
 void Lua_V1::SetHardwareState() {
 	// changing only in config setup (software/hardware rendering)
 	bool accel = getbool(1);
-	if (accel)
-		g_registry->set("soft_renderer", "false");
-	else
-		g_registry->set("soft_renderer", "true");
+	g_registry->setBool("soft_renderer", !accel);
+	g_grim->changeHardwareState();
 }
 
 void Lua_V1::SetVideoDevices() {
-	int devId;
-	int modeId;
-
-	devId = (int)lua_getnumber(lua_getparam(1));
-	modeId = (int)lua_getnumber(lua_getparam(2));
+	/*int devId = (int)*/lua_getnumber(lua_getparam(1));
+	/*int modeId = (int)*/lua_getnumber(lua_getparam(2));
 	// ignore setting video devices
 }
 
@@ -421,7 +416,7 @@ void Lua_V1::GetPointSector() {
 	Sector *result = g_grim->getCurrSet()->findPointSector(point, sectorType);
 	if (result) {
 		lua_pushnumber(result->getSectorId());
-		lua_pushstring(const_cast<char *>(result->getName()));
+		lua_pushstring(result->getName());
 		lua_pushnumber(result->getType());
 	} else {
 		lua_pushnil();
@@ -443,7 +438,7 @@ void Lua_V1::GetActorSector() {
 	Sector *result = g_grim->getCurrSet()->findPointSector(pos, sectorType);
 	if (result) {
 		lua_pushnumber(result->getSectorId());
-		lua_pushstring(const_cast<char *>(result->getName()));
+		lua_pushstring(result->getName());
 		lua_pushnumber(result->getType());
 	} else {
 		lua_pushnil();
@@ -463,19 +458,14 @@ void Lua_V1::IsActorInSector() {
 	Actor *actor = getactor(actorObj);
 	const char *name = lua_getstring(nameObj);
 
-	int numSectors = g_grim->getCurrSet()->getSectorCount();
-	for (int i = 0; i < numSectors; i++) {
-		Sector *sector = g_grim->getCurrSet()->getSectorBase(i);
-		if (strstr(sector->getName(), name)) {
-			if (sector->isPointInSector(actor->getPos())) {
-				lua_pushnumber(sector->getSectorId());
-				lua_pushstring(sector->getName());
-				lua_pushnumber(sector->getType());
-				return;
-			}
-		}
+	Sector *sector = g_grim->getCurrSet()->getSector(name, actor->getPos());
+	if (sector) {
+		lua_pushnumber(sector->getSectorId());
+		lua_pushstring(sector->getName());
+		lua_pushnumber(sector->getType());
+	} else {
+		lua_pushnil();
 	}
-	lua_pushnil();
 }
 
 void Lua_V1::IsPointInSector() {
@@ -495,19 +485,15 @@ void Lua_V1::IsPointInSector() {
 	float z = lua_getnumber(zObj);
 	Math::Vector3d pos(x, y, z);
 
-	int numSectors = g_grim->getCurrSet()->getSectorCount();
-	for (int i = 0; i < numSectors; i++) {
-		Sector *sector = g_grim->getCurrSet()->getSectorBase(i);
-		if (strstr(sector->getName(), name)) {
-			if (sector->isPointInSector(pos)) {
-				lua_pushnumber(sector->getSectorId());
-				lua_pushstring(sector->getName());
-				lua_pushnumber(sector->getType());
-				return;
-			}
-		}
+	Sector *sector = g_grim->getCurrSet()->getSector(name);
+
+	if (sector && sector->isPointInSector(pos)) {
+		lua_pushnumber(sector->getSectorId());
+		lua_pushstring(sector->getName());
+		lua_pushnumber(sector->getType());
+	} else {
+		lua_pushnil();
 	}
-	lua_pushnil();
 }
 
 void Lua_V1::GetSectorOppositeEdge() {
@@ -525,31 +511,26 @@ void Lua_V1::GetSectorOppositeEdge() {
 	Actor *actor = getactor(actorObj);
 	const char *name = lua_getstring(nameObj);
 
-	int numSectors = g_grim->getCurrSet()->getSectorCount();
-	for (int i = 0; i < numSectors; i++) {
-		Sector *sector = g_grim->getCurrSet()->getSectorBase(i);
-		if (strmatch(sector->getName(), name)) {
-			if (sector->getNumVertices() != 4)
-				warning("GetSectorOppositeEdge(): cheat box with %d (!= 4) edges!", sector->getNumVertices());
-			Math::Vector3d* vertices = sector->getVertices();
-			Sector::ExitInfo e;
+	Sector *sector = g_grim->getCurrSet()->getSector(name);
+	if (sector) {
+		if (sector->getNumVertices() != 4)
+			warning("GetSectorOppositeEdge(): cheat box with %d (!= 4) edges!", sector->getNumVertices());
+		Math::Vector3d* vertices = sector->getVertices();
+		Sector::ExitInfo e;
 
-			sector->getExitInfo(actor->getPos(), -actor->getPuckVector(), &e);
-			float frac = (e.exitPoint - vertices[e.edgeVertex + 1]).getMagnitude() / e.edgeDir.getMagnitude();
-			e.edgeVertex -= 2;
-			if (e.edgeVertex < 0)
-				e.edgeVertex += sector->getNumVertices();
-			Math::Vector3d edge = vertices[e.edgeVertex + 1] - vertices[e.edgeVertex];
-			Math::Vector3d p = vertices[e.edgeVertex] + edge * frac;
-			lua_pushnumber(p.x());
-			lua_pushnumber(p.y());
-			lua_pushnumber(p.z());
-
-			return;
-		}
+		sector->getExitInfo(actor->getPos(), -actor->getPuckVector(), &e);
+		float frac = (e.exitPoint - vertices[e.edgeVertex + 1]).getMagnitude() / e.edgeDir.getMagnitude();
+		e.edgeVertex -= 2;
+		if (e.edgeVertex < 0)
+			e.edgeVertex += sector->getNumVertices();
+		Math::Vector3d edge = vertices[e.edgeVertex + 1] - vertices[e.edgeVertex];
+		Math::Vector3d p = vertices[e.edgeVertex] + edge * frac;
+		lua_pushnumber(p.x());
+		lua_pushnumber(p.y());
+		lua_pushnumber(p.z());
+	} else {
+		lua_pushnil();
 	}
-
-	lua_pushnil();
 }
 
 void Lua_V1::MakeSectorActive() {
@@ -565,17 +546,15 @@ void Lua_V1::MakeSectorActive() {
 	}
 
 	bool visible = !lua_isnil(lua_getparam(2));
-	int numSectors = g_grim->getCurrSet()->getSectorCount();
+
 	if (lua_isstring(sectorObj)) {
 		const char *name = lua_getstring(sectorObj);
-		for (int i = 0; i < numSectors; i++) {
-			Sector *sector = g_grim->getCurrSet()->getSectorBase(i);
-			if (strmatch(sector->getName(), name)) {
-				sector->setVisible(visible);
-				return;
-			}
+		Sector *sector = g_grim->getCurrSet()->getSector(name);
+		if (sector) {
+			sector->setVisible(visible);
 		}
 	} else if (lua_isnumber(sectorObj)) {
+		int numSectors = g_grim->getCurrSet()->getSectorCount();
 		int id = (int)lua_getnumber(sectorObj);
 		for (int i = 0; i < numSectors; i++) {
 			Sector *sector = g_grim->getCurrSet()->getSectorBase(i);
@@ -734,6 +713,7 @@ void Lua_V1::FileFindFirst() {
 	const char *extension = lua_getstring(extObj);
 	Common::SaveFileManager *saveFileMan = g_system->getSavefileManager();
 	g_grim->_listFiles = saveFileMan->listSavefiles(extension);
+	Common::sort(g_grim->_listFiles.begin(), g_grim->_listFiles.end());
 	g_grim->_listFilesIter = g_grim->_listFiles.begin();
 
 	if (g_grim->_listFilesIter == g_grim->_listFiles.end())
@@ -882,7 +862,8 @@ void Lua_V1::GetSaveGameImage() {
 	}
 	const char *filename = lua_getstring(param);
 	SaveGame *savedState = SaveGame::openForLoading(filename);
-	if (!savedState || savedState->saveVersion() != SaveGame::SAVEGAME_VERSION) {
+	if (!savedState || !savedState->isCompatible()) {
+		delete savedState;
 		lua_pushnil();
 		return;
 	}
@@ -891,7 +872,8 @@ void Lua_V1::GetSaveGameImage() {
 	for (int l = 0; l < dataSize / 2; l++) {
 		data[l] = savedState->readLEUint16();
 	}
-	screenshot = new Bitmap((char *)data, width, height, 16, "screenshot");
+	Graphics::PixelBuffer buf(Graphics::createPixelFormat<565>(), (byte *)data);
+	screenshot = new Bitmap(buf, width, height, "screenshot");
 	delete[] data;
 	if (screenshot) {
 		lua_pushusertag(screenshot->getId(), MKTAG('V','B','U','F'));
@@ -939,7 +921,7 @@ void Lua_V1::GetSaveGameData() {
 	SaveGame *savedState = SaveGame::openForLoading(filename);
 	lua_Object result = lua_createtable();
 
-	if (!savedState || savedState->saveVersion() != SaveGame::SAVEGAME_VERSION) {
+	if (!savedState || !savedState->isCompatible()) {
 		lua_pushobject(result);
 		lua_pushnumber(2);
 		lua_pushstring("mo.set"); // Just a placeholder to not make it throw a lua error
@@ -949,7 +931,7 @@ void Lua_V1::GetSaveGameData() {
 		if (!savedState) {
 			warning("Savegame %s is invalid", filename);
 		} else {
-			warning("Savegame %s is incompatible with this Residual build. Save version: %d; current version: %d", filename, savedState->saveVersion(), SaveGame::SAVEGAME_VERSION);
+			warning("Savegame %s is incompatible with this ResidualVM build. Save version: %d; current version: %d", filename, savedState->saveMajorVersion(), SaveGame::SAVEGAME_MAJOR_VERSION);
 		}
 		delete savedState;
 		return;
@@ -1138,7 +1120,6 @@ STUB_FUNC(Lua_V1::WorldToScreen)
 STUB_FUNC(Lua_V1::SetActorRoll)
 STUB_FUNC(Lua_V1::SetActorFrustrumCull)
 STUB_FUNC(Lua_V1::DriveActorTo)
-STUB_FUNC(Lua_V1::GetActorRect)
 STUB_FUNC(Lua_V1::GetTranslationMode)
 STUB_FUNC(Lua_V1::SetTranslationMode)
 STUB_FUNC(Lua_V1::WalkActorToAvoiding)
@@ -1420,20 +1401,31 @@ void Lua_V1::registerOpcodes() {
 	LuaBase::registerOpcodes();
 }
 
-void Lua_V1::postRestoreHandle() {
-	// Apply the patch, only if it wasn't applied already.
-	if (lua_isnil(lua_getglobal("  service_release.lua")))
-		dofile("patch05.bin");
+void Lua_V1::boot() {
+	// The default value of these globals, defined in _controls.lua, is 256, 257, 258, 259.
+	// These values clash with the numpad 0, 1, 2 and 3 keycodes, so we set them here.
+	lua_pushnumber(KEYCODE_JOY1_HLEFT);
+	lua_setglobal("JOYSTICK_X_LEFT");
 
+	lua_pushnumber(KEYCODE_JOY1_HRIGHT);
+	lua_setglobal("JOYSTICK_X_RIGHT");
+
+	lua_pushnumber(KEYCODE_JOY1_HUP);
+	lua_setglobal("JOYSTICK_Y_UP");
+
+	lua_pushnumber(KEYCODE_JOY1_HDOWN);
+	lua_setglobal("JOYSTICK_Y_DOWN");
+
+	LuaBase::boot();
+}
+
+void Lua_V1::postRestoreHandle() {
 	lua_beginblock();
 	// Set the developerMode, since the save contains the value of
 	// the installation it was made with.
 	lua_pushobject(lua_getglobal("developerMode"));
-	const char *devMode = g_registry->get("good_times", "");
-	if (devMode[0] == 0)
-		lua_pushnil();
-	else
-		lua_pushstring(devMode);
+	bool devMode = g_registry->getBool("good_times");
+	pushbool(devMode);
 	lua_setglobal("developerMode");
 	lua_endblock();
 }

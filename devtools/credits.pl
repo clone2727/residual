@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # This tools is kind of a hack to be able to maintain the credits list of
-# ResidualVM in a single central location. We then generate the various versions
+# ScummVM in a single central location. We then generate the various versions
 # of the credits in other places from this source. In particular:
 # - The AUTHORS file
 # - The gui/credits.h header file
@@ -444,31 +444,39 @@ sub add_paragraph {
 #
 
 begin_credits("Credits");
-    begin_section("ResidualVM Team");
+    begin_section("ResidualVM");
 	begin_section("Project Leader");
 	    begin_persons();
 		add_person("Pawe&#322; Ko&#322;odziejski", "aquadran", "");
 	    end_persons();
 	end_section();
 
-	begin_section("Engine Teams");
-	    begin_section("Grim");
-		add_person("James Brown", "ender", "Core developer  (retired)");
+	begin_section("Teams");
+	    begin_section("Grim Team");
+		add_person("James Brown", "ender", "Core developer (retired)");
 		add_person("Giulio Camuffo", "giucam", "Core developer");
 		add_person("Pawe&#322; Ko&#322;odziejski", "aquadran", "Core developer (suspended)");
-		add_person("Einar Johan T. S&oslash;m&aring;en", "somaen", "Initial EMI support, various code fixes and improvements");
+		add_person("Einar Johan T. S&oslash;m&aring;en", "somaen", "EMI support, various code fixes and improvements");
+		add_person("Joel Teichroeb ", "klusark", "EMI support, various engine fixes and improvements");
 	    end_section();
 
-	    begin_section("Grim Contributors");
-		add_paragraph(
-		"If you have contributed to this engine then you deserve to be on this ".
-		"list. Contact us and we'll add you.");
+	    begin_section("Myst 3 Team");
+		add_person("Bastien Bouclet", "bgK", "Core developer");
+	    end_section();
+	end_section();
+
+	begin_section("Contributors");
+	    add_paragraph(
+	    "If you have contributed to this engine then you deserve to be on this ".
+	    "list. Contact us and we'll add you.");
+	    begin_section("Grim");
+		add_person("Thomas Allen", "olldray", "Various engine code fixes and improvements");
 		add_person("Torbj&ouml;rn Andersson", "eriktorbjorn", "Various code fixes");
 		add_person("Ori Avtalion", "salty-horse", "Lipsync, LAF support, various code fixes");
 		add_person("Robert Biro", "DarthJDG", "Fixes to antiliasing");
 		add_person("Bastien Bouclet", "bgK", "Various fixes to engine");
 		add_person("Marcus Comstedt", "marcus_c", "Initial Dreamcast port");
-		add_person("Andrea Corna", "Yak Bizzarro", "Improved font support, patch extractor, few code improvements");
+		add_person("Andrea Corna", "Yak Bizzarro", "Patcher module, various engine improvements");
 		add_person("Jonathan Gray", "khalek", "Various code fixes");
 		add_person("Vincent Hamm", "yazoo", "Various engine code fixes and improvements");
 		add_person("Sven Hesse", "DrMcCoy", "Various compilation fixes");
@@ -476,16 +484,16 @@ begin_credits("Credits");
 		add_person("Erich Hoover", "Compholio", "x86-64 fixes, various code fixes and improvements");
 		add_person("Max Horn", "fingolfin", "Minor code fixes");
 		add_person("Travis Howell", "Kirben", "Various code fixes, Windows port");
+		add_person("Guillem Jover", "guillemj", "Few code improvements");
 		add_person("Filippos Karapetis", "bluegr", "Compilation fixes");
 		add_person("Joost Peters", "joostp", "Various code fixes");
 		add_person("George Macon", "gmacon", "Compilation fixes");
 		add_person("Josh Matthews", "jdm", "Few fixes to engine");
-		add_person("Matthieu Milan", "usineur", "Few code improvements");
+		add_person("Matthieu Milan", "usineur", "Various engine improvements");
 		add_person("Christian Neumair", "mannythegnome", "Various optimisation patches");
-		add_person("Vincent Pelletier", "vpelletier", "Various engine improvementts and code fixes");
+		add_person("Vincent Pelletier", "vpelletier", "Various engine improvements and code fixes");
 		add_person("Daniel Schepler", "", "Initial engine codebase, LUA support");
 		add_person("Yaron Tausky", "yaront", "Fixes to subtitles");
-		add_person("Joel Teichroeb ", "klusark", "Initial EMI support, various code fixes and improvements");
 		add_person("Julien Templier", "Littleboy", "create_project tool");
 		add_person("Pino Toscano", "pinotree", "Debian GNU/Linux package files");
 		add_person("Lionel Ulmer", "bbrox", "OpenGL optimisations");
@@ -493,7 +501,11 @@ begin_credits("Credits");
 		add_person("", "JenniBee", "Compilation fixes");
 	    end_section();
 
+	    begin_section("Myst 3");
+		add_person("Matthew Hoops", "clone2727", "Various engine improvements and code fixes");
+	    end_section();
 	end_section();
+
     end_section();
 
     begin_section("ScummVM code");
@@ -524,6 +536,9 @@ begin_credits("Credits");
 	  add_paragraph(
 	  "Bret Mogilefsky, for managing to create a SPUTM-style 3D LUA engine, ".
 	  "and avoiding the horrible hack it could have been.");
+
+	  add_paragraph(
+	  "Benjamin Haisch, for emimeshviewer, which our EMI code borrows heavily from. ");
 
   end_section();
 

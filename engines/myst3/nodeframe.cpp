@@ -44,8 +44,9 @@ NodeFrame::NodeFrame(Myst3Engine *vm, uint16 id) :
 	Common::MemoryReadStream *jpegStream = jpegDesc->getData();
 
 	if (jpegStream) {
-		Graphics::JPEG jpeg;
-		jpeg.read(jpegStream);
+		Graphics::JPEGDecoder jpeg;
+		if (!jpeg.loadStream(*jpegStream))
+			error("Could not decoder Myst III JPEG");
 
 		_faces[0] = new Face(_vm);
 		_faces[0]->setTextureFromJPEG(&jpeg);
@@ -65,8 +66,8 @@ void NodeFrame::draw() {
 	if (_vm->_state->getViewType() == kMenu) {
 		screenRect = Common::Rect(Renderer::kOriginalWidth, Renderer::kOriginalHeight);
 	} else {
-		screenRect = Common::Rect(Renderer::kOriginalWidth, Scene::kFrameHeight);
-		screenRect.translate(0, Scene::kTopBorderHeight);
+		screenRect = Common::Rect(Renderer::kOriginalWidth, Renderer::kFrameHeight);
+		screenRect.translate(0, Renderer::kTopBorderHeight);
 	}
 
 	// Used fragment of texture

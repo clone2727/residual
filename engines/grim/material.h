@@ -55,8 +55,8 @@ public:
 	int _refCount;
 
 private:
-	void initGrim(const Common::String &filename, Common::SeekableReadStream *data, CMap *cmap);
-	void initEMI(const Common::String &filename, Common::SeekableReadStream *data);
+	void initGrim(Common::SeekableReadStream *data);
+	void initEMI(Common::SeekableReadStream *data);
 };
 
 class Material : public Object {
@@ -66,7 +66,7 @@ public:
 
 	void reload(CMap *cmap);
 	// Load this texture into the GL context
-	void select() const;
+	virtual void select() const;
 
 	// Set which image in an animated texture to use
 	void setActiveTexture(int n);
@@ -77,7 +77,10 @@ public:
 	const Common::String &getFilename() const;
 	MaterialData *getData() const;
 
-	~Material();
+	virtual ~Material();
+
+protected:
+	Material();
 
 private:
 	MaterialData *_data;

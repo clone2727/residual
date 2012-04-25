@@ -534,7 +534,7 @@ int main(int argc, char *argv[]) {
 		projectWarnings["agos"].push_back("4511");
 
 		projectWarnings["dreamweb"].push_back("4355");
-
+		
 		projectWarnings["lure"].push_back("4189");
 		projectWarnings["lure"].push_back("4355");
 
@@ -575,6 +575,9 @@ int main(int argc, char *argv[]) {
 		globalWarnings.push_back("-Wwrite-strings");
 		// The following are not warnings at all... We should consider adding them to
 		// a different list of parameters.
+#if !NEEDS_RTTI
+		globalWarnings.push_back("-fno-rtti");
+#endif
 		globalWarnings.push_back("-fno-exceptions");
 		globalWarnings.push_back("-fcheck-new");
 
@@ -842,7 +845,7 @@ const Feature s_features[] = {
 	{    "flac",        "USE_FLAC", "libFLAC_static",   true, "FLAC support" },
 	{     "png",         "USE_PNG", "libpng",           false, "libpng support" },
 	{  "theora",   "USE_THEORADEC", "libtheora_static", false, "Theora decoding support" },
-	{   "mpeg2",       "USE_MPEG2", "libmpeg2",         false, "mpeg2 codec for cutscenes" },
+	{   "mpeg2",       "USE_MPEG2", "libmpeg2",         true,  "mpeg2 codec for cutscenes" },
 
 	// Feature flags
 	{        "bink",        "USE_BINK",         "", true, "Bink video support" },
@@ -1212,10 +1215,9 @@ void ProjectProvider::createProject(const BuildSetup &setup) {
 		createModuleList(setup.srcDir + "/gui", setup.defines, in, ex);
 		createModuleList(setup.srcDir + "/audio", setup.defines, in, ex);
 		createModuleList(setup.srcDir + "/audio/softsynth/mt32", setup.defines, in, ex);
-		createModuleList(setup.srcDir + "/math", setup.defines, in, ex);
-#if HAS_VIDEO_FOLDER
 		createModuleList(setup.srcDir + "/video", setup.defines, in, ex);
-#endif
+		//ResidualVM specific:
+		createModuleList(setup.srcDir + "/math", setup.defines, in, ex);
 
 		// Resource files
 		in.push_back(setup.srcDir + "/icons/" + setup.projectName + ".ico");

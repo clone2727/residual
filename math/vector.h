@@ -23,6 +23,8 @@
 #ifndef MATH_VECTOR_H
 #define MATH_VECTOR_H
 
+#include "common/stream.h"
+
 #include "math/matrix.h"
 #include "math/utils.h"
 
@@ -38,16 +40,23 @@ public:
 	void normalize();
 	Vector(dim) getNormalized() const;
 	float getMagnitude() const;
+	float getSquareMagnitude() const;
 	float getDistanceTo(const Vector(dim) &point) const;
-	float getDotProduct(const Vector(dim) &v) const;
+	float dotProduct(const Vector(dim) &v) const;
 
 	inline void setValue(int i, float val) { value(i) = val; }
 	inline float getValue(int i) const { return value(i); }
 
 	template<int d>
 	inline static float dotProduct(const Vector(d) &v1, const Vector(d) &v2) {
-		return v1.getDotProduct(v2);
+		return v1.dotProduct(v2);
 	}
+
+	/**
+	 * Reads <i>dim</i> floats from the passed stream, and uses them
+	 * as value 0...dim in chronological order.
+	 */
+	void readFromStream(Common::ReadStream *stream);
 
 protected:
 	MatrixType() : MatrixBase<dim, 1>() { }
@@ -78,11 +87,16 @@ Vector(dim) MatrixType<dim, 1>::getNormalized() const {
 
 template<int dim>
 float MatrixType<dim, 1>::getMagnitude() const {
+	return sqrt(getSquareMagnitude());
+}
+
+template<int dim>
+float MatrixType<dim, 1>::getSquareMagnitude() const {
 	float mag = 0;
 	for (int i = 0; i < dim; ++i) {
 		mag += square(getValue(i));
 	}
-	return sqrt(mag);
+	return mag;
 }
 
 template<int dim>
@@ -95,12 +109,23 @@ float MatrixType<dim, 1>::getDistanceTo(const Vector(dim) &point) const {
 }
 
 template<int dim>
-float MatrixType<dim, 1>::getDotProduct(const Vector(dim) &v) const {
+float MatrixType<dim, 1>::dotProduct(const Vector(dim) &v) const {
 	float result = 0;
 	for (int i = 0; i < dim; ++i) {
 		result += value(i) * v.value(i);
 	}
 	return result;
+}
+
+template<int dim>
+void MatrixType<dim, 1>::readFromStream(Common::ReadStream *stream) {
+	const int size = dim * sizeof(float);
+	char buf[size];
+	stream->read(buf, size);
+
+	for (int i = 0; i < dim; ++i) {
+		setValue(i, get_float(buf + i * sizeof(float)));
+	}
 }
 
 }

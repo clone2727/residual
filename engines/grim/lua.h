@@ -26,13 +26,14 @@
 #include "common/str.h"
 #include "common/list.h"
 
+#include "engines/grim/color.h"
+
 namespace Grim {
 
 typedef uint32 lua_Object; // from lua/lua.h
 
 class Actor;
 class Bitmap;
-class PoolColor;
 class Costume;
 class Font;
 class ObjectState;
@@ -119,6 +120,8 @@ public:
 	void setMovieTime(float movieTime);
 	virtual void registerLua();
 	virtual void registerOpcodes();
+	virtual void loadSystemScript();
+	virtual bool supportedVersion();
 	virtual void boot();
 	virtual void postRestoreHandle() { }
 
@@ -145,7 +148,7 @@ protected:
 	Bitmap *getbitmap(lua_Object obj);
 	TextObject *gettextobject(lua_Object obj);
 	Font *getfont(lua_Object obj);
-	PoolColor *getcolor(lua_Object obj);
+	Color getcolor(lua_Object obj);
 	PrimitiveObject *getprimitive(lua_Object obj);
 	ObjectState *getobjectstate(lua_Object obj);
 

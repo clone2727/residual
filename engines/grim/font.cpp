@@ -26,21 +26,22 @@
 #include "engines/grim/grim.h"
 #include "engines/grim/savegame.h"
 #include "engines/grim/font.h"
-#include "engines/grim/lua.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/resource.h"
 #include "engines/grim/gfx_base.h"
 
 namespace Grim {
 
 Font::Font(const Common::String &filename, Common::SeekableReadStream *data) :
-		PoolObject<Font, MKTAG('F', 'O', 'N', 'T')>(), _userData(0) {
+		_userData(NULL),
+		_fontData(NULL), _charHeaders(NULL), _charIndex(NULL) {
 	load(filename, data);
 }
 
 Font::Font() :
-		PoolObject<Font, MKTAG('F', 'O', 'N', 'T')>() {
-	_charIndex = NULL;
+		_userData(NULL),
+		_fontData(NULL), _charHeaders(NULL), _charIndex(NULL)
+{
+
 }
 
 Font::~Font() {
@@ -145,8 +146,17 @@ void Font::restoreState(SaveGame *state) {
 	Common::String fname = state->readString();
 	Common::SeekableReadStream *stream;
 
+	g_driver->destroyFont(this);
+	delete[] _fontData;
+	_fontData = NULL;
+	delete[] _charIndex;
+	_charIndex = NULL;
+	delete[] _charHeaders;
+	_charHeaders = NULL;
+
 	stream = g_resourceloader->openNewStreamFile(fname.c_str(), true);
 	load(fname, stream);
+	delete stream;
 }
 
 // Hardcoded default font for GUI, etc

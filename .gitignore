@@ -18,9 +18,10 @@ lib*.a
 /*.dSYM
 /MT32_CONTROL.ROM
 /MT32_PCM.ROM
-/Residual.app
+/ResidualVM.app
 /residualvm-ps3.pkg
 /*.ipk
+/*.dmg
 /.project
 /.cproject
 /.settings
@@ -57,7 +58,20 @@ project.xcworkspace
 /dists/msvc*/*.dat
 /dists/msvc*/*.dll
 
+/doc/*.aux
+/doc/*.dvi
+/doc/*.log
+/doc/*.out
+/doc/*.pdf
+/doc/*.ps
+/doc/*.toc
+
 /plugins
+
+/test/runner
+/test/runner.cpp
+/test/*.dSYM
+
 /devtools/create_project/create_project
 
 #ignore thumbnails created by windows

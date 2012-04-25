@@ -29,7 +29,6 @@
 #include "engines/grim/grim.h"
 #include "engines/grim/lua_v1.h"
 #include "engines/grim/resource.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/bitmap.h"
 #include "engines/grim/primitives.h"
 #include "engines/grim/iris.h"
@@ -41,18 +40,6 @@
 
 namespace Grim {
 
-#if 0
-void killBitmapPrimitives(Bitmap *bitmap) {
-	for (GrimEngine::PrimitiveListType::const_iterator i = g_grim->primitivesBegin(); i != g_grim->primitivesEnd(); ++i) {
-		PrimitiveObject *p = i->_value;
-		if (p->isBitmap() && p->getBitmapHandle() == bitmap) {
-			g_grim->killPrimitiveObject(p);
-			break;
-		}
-	}
-}
-#endif
-
 void Lua_V1::GetImage() {
 	lua_Object nameObj = lua_getparam(1);
 	if (!lua_isstring(nameObj)) {
@@ -60,7 +47,7 @@ void Lua_V1::GetImage() {
 		return;
 	}
 	const char *bitmapName = lua_getstring(nameObj);
-	Bitmap *b = g_resourceloader->loadBitmap(bitmapName);
+	Bitmap *b = Bitmap::create(bitmapName);
 	lua_pushusertag(b->getId(), MKTAG('V','B','U','F'));
 }
 
@@ -85,9 +72,7 @@ void Lua_V1::BlastImage() {
 	int x = (int)lua_getnumber(xObj);
 	int y = (int)lua_getnumber(yObj);
 //	bool transparent = getbool(4); // TODO transparent/masked copy into display
-	bitmap->setX(x);
-	bitmap->setY(y);
-	g_driver->drawBitmap(bitmap);
+	bitmap->draw(x, y);
 }
 
 void Lua_V1::CleanBuffer() {
@@ -150,6 +135,8 @@ void Lua_V1::IsMoviePlaying() {
 
 void Lua_V1::StopMovie() {
 	g_movie->stop();
+	// Delete subtitles that may have not expired.
+	g_grim->setMovieSubtitle(NULL);
 }
 
 void Lua_V1::PauseMovie() {
@@ -163,7 +150,7 @@ void Lua_V1::PurgePrimitiveQueue() {
 void Lua_V1::DrawPolygon() {
 	lua_Object pointObj;
 	Common::Point p1, p2, p3, p4;
-	PoolColor *color = NULL;
+	Color color;
 
 	lua_Object tableObj1 = lua_getparam(1);
 	if (!lua_istable(tableObj1)) {
@@ -171,7 +158,7 @@ void Lua_V1::DrawPolygon() {
 		return;
 	}
 
-	int layer = 2;
+	//int layer = 2;
 	lua_Object tableObj2 = lua_getparam(2);
 	if (lua_istable(tableObj2)) {
 		lua_pushobject(tableObj2);
@@ -184,7 +171,7 @@ void Lua_V1::DrawPolygon() {
 		lua_pushstring("layer");
 		lua_Object layerObj = lua_gettable();
 		if (lua_isnumber(layerObj))
-			layer = (int)lua_getnumber(layerObj);
+			/*layer = (int)*/lua_getnumber(layerObj);
 	}
 
 	// This code support static 4 points polygon as game doesn't use other than that.
@@ -229,7 +216,7 @@ void Lua_V1::DrawPolygon() {
 
 void Lua_V1::DrawLine() {
 	Common::Point p1, p2;
-	PoolColor *color = NULL;;
+	Color color;
 	lua_Object x1Obj = lua_getparam(1);
 	lua_Object y1Obj = lua_getparam(2);
 	lua_Object x2Obj = lua_getparam(3);
@@ -246,7 +233,7 @@ void Lua_V1::DrawLine() {
 	p2.x = (int)lua_getnumber(x2Obj);
 	p2.y = (int)lua_getnumber(y2Obj);
 
-	int layer = 2;
+	//int layer = 2;
 	if (lua_istable(tableObj)) {
 		lua_pushobject(tableObj);
 		lua_pushstring("color");
@@ -258,7 +245,7 @@ void Lua_V1::DrawLine() {
 		lua_pushstring("layer");
 		lua_Object layerObj = lua_gettable();
 		if (lua_isnumber(layerObj))
-			layer = (int)lua_getnumber(layerObj);
+			/*layer = (int)*/lua_getnumber(layerObj);
 	}
 
 	PrimitiveObject *p = new PrimitiveObject();
@@ -267,9 +254,6 @@ void Lua_V1::DrawLine() {
 }
 
 void Lua_V1::ChangePrimitive() {
-	PrimitiveObject *psearch, *pmodify = NULL;
-	PoolColor *color = NULL;
-
 	lua_Object param1 = lua_getparam(1);
 	if (!lua_isuserdata(param1) || lua_tag(param1) != MKTAG('P','R','I','M'))
 		return;
@@ -278,17 +262,10 @@ void Lua_V1::ChangePrimitive() {
 	if (!lua_istable(tableObj))
 		return;
 
-	psearch = getprimitive(param1);
-
-	foreach (PrimitiveObject *p, PrimitiveObject::getPool()) {
-		if (p->getP1().x == psearch->getP1().x && p->getP2().x == psearch->getP2().x
-				&& p->getP1().y == psearch->getP1().y && p->getP2().y == psearch->getP2().y) {
-			pmodify = p;
-			break;
-		}
-	}
+	PrimitiveObject *pmodify = getprimitive(param1);
 	assert(pmodify);
 
+	Color color;
 	lua_pushobject(tableObj);
 	lua_pushstring("color");
 	lua_Object colorObj = lua_gettable();
@@ -312,12 +289,12 @@ void Lua_V1::ChangePrimitive() {
 	lua_pushstring("yoffset");
 	lua_Object yoffset = lua_gettable();
 	if (lua_isnumber(xoffset) || lua_isnumber(yoffset)) {
-		int x = 0;
-		int y = 0;
+		//int x = 0;
+		//int y = 0;
 		if (lua_isnumber(xoffset))
-			x = (int)lua_getnumber(xoffset);
+			/*x = (int)*/lua_getnumber(xoffset);
 		if (lua_isnumber(yoffset))
-			y = (int)lua_getnumber(yoffset);
+			/*y = (int)*/lua_getnumber(yoffset);
 		// TODO pmodify->setOffets(x, y);
 		assert(0);
 	}
@@ -345,12 +322,12 @@ void Lua_V1::ChangePrimitive() {
 	lua_pushstring("y2");
 	lua_Object y2 = lua_gettable();
 	if (lua_isnumber(x2) || lua_isnumber(y2)) {
-		int x = -1;
-		int y = -1;
+		//int x = -1;
+		//int y = -1;
 		if (lua_isnumber(x2))
-			x = (int)lua_getnumber(x2);
+			/*x = (int)*/lua_getnumber(x2);
 		if (lua_isnumber(y2))
-			y = (int)lua_getnumber(y2);
+			/*y = (int)*/lua_getnumber(y2);
 		// TODO pmodify->setSize(x, y);
 		assert(0);
 	}
@@ -362,12 +339,12 @@ void Lua_V1::ChangePrimitive() {
 	lua_pushstring("height");
 	lua_Object height = lua_gettable();
 	if (lua_isnumber(width) || lua_isnumber(height)) {
-		int x = -1;
-		int y = -1;
+		//int x = -1;
+		//int y = -1;
 		if (lua_isnumber(width))
-			x = (int)lua_getnumber(width);
+			/*x = (int)*/lua_getnumber(width);
 		if (lua_isnumber(height))
-			y = (int)lua_getnumber(height);
+			/*y = (int)*/lua_getnumber(height);
 		// TODO pmodify->setSize(x, y);
 		assert(0);
 	}
@@ -375,7 +352,7 @@ void Lua_V1::ChangePrimitive() {
 
 void Lua_V1::DrawRectangle() {
 	Common::Point p1, p2;
-	PoolColor *color = NULL;
+	Color color;
 	lua_Object objX1 = lua_getparam(1);
 	lua_Object objY1 = lua_getparam(2);
 	lua_Object objX2 = lua_getparam(3);
@@ -414,7 +391,7 @@ void Lua_V1::DrawRectangle() {
 
 void Lua_V1::BlastRect() {
 	Common::Point p1, p2;
-	PoolColor *color = NULL;
+	Color color;
 	lua_Object objX1 = lua_getparam(1);
 	lua_Object objY1 = lua_getparam(2);
 	lua_Object objX2 = lua_getparam(3);
@@ -482,7 +459,6 @@ void Lua_V1::ScreenShot() {
 	GrimEngine::EngineMode mode = g_grim->getMode();
 	g_grim->setMode(GrimEngine::NormalMode);
 	g_grim->updateDisplayScene();
-	g_driver->storeDisplay();
 	Bitmap *screenshot = g_driver->getScreenshot(width, height);
 	g_grim->setMode(mode);
 	if (screenshot) {
@@ -521,6 +497,7 @@ void Lua_V1::EngineDisplay() {
 
 void Lua_V1::ForceRefresh() {
 	g_grim->refreshDrawMode();
+	g_driver->clearCleanBuffer();
 }
 
 void Lua_V1::RenderModeUser() {

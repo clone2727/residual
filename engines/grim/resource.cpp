@@ -32,15 +32,19 @@
 #include "engines/grim/bitmap.h"
 #include "engines/grim/font.h"
 #include "engines/grim/model.h"
-#include "engines/grim/modelemi.h"
-#include "engines/grim/skeleton.h"
 #include "engines/grim/inputdialog.h"
 #include "engines/grim/debug.h"
+#include "engines/grim/emi/animationemi.h"
+#include "engines/grim/emi/costumeemi.h"
+#include "engines/grim/emi/modelemi.h"
+#include "engines/grim/emi/skeleton.h"
 #include "engines/grim/patchr.h"
 #include "engines/grim/update/update.h"
 #include "common/algorithm.h"
 #include "common/zlib.h"
-#include "gui/message.h"
+#include "common/memstream.h"
+#include "common/file.h"
+#include "common/config-manager.h"
 
 namespace Grim {
 
@@ -88,7 +92,13 @@ ResourceLoader::ResourceLoader() {
 				error("residualvm-grim-patch.lab not found");
 
 			SearchMan.listMatchingMembers(files, "residualvm-grim-patch.lab");
-			SearchMan.listMatchingMembers(files, "data???.lab");
+			SearchMan.listMatchingMembers(files, "datausr.lab");
+			SearchMan.listMatchingMembers(files, "data005.lab");
+			SearchMan.listMatchingMembers(files, "data004.lab");
+			SearchMan.listMatchingMembers(files, "data003.lab");
+			SearchMan.listMatchingMembers(files, "data002.lab");
+			SearchMan.listMatchingMembers(files, "data001.lab");
+			SearchMan.listMatchingMembers(files, "data000.lab");
 			SearchMan.listMatchingMembers(files, "movie??.lab");
 			SearchMan.listMatchingMembers(files, "vox????.lab");
 			SearchMan.listMatchingMembers(files, "year?mus.lab");
@@ -98,14 +108,14 @@ ResourceLoader::ResourceLoader() {
 			//Sort the archives in order to ensure that they are loaded with the correct order
 			Common::sort(files.begin(), files.end(), LabListComperator());
 
-			//Check the presence of datausr.lab and ask the user if he wants to load it.
+			//Check the presence of datausr.lab and if the user wants to load it.
 			//In this case put it in the top of the list
 			Common::ArchiveMemberList::iterator datausr_it = Common::find_if(files.begin(), files.end(), LabListComperator("datausr.lab"));
 			if (datausr_it != files.end()) {
-				Grim::InputDialog d("User-patch detected, the ResidualVM-team\n provides no support for using such patches.\n Click OK to load, or Cancel\n to skip the patch.", "OK", false);
-				int res = d.runModal();
-				if (res == GUI::kMessageOK)
+				if (ConfMan.getBool("datausr_load")) {
+					warning("Loading datausr.lab. Please note that the ResidualVM-team doesn't provide support for using such patches");
 					files.push_front(*datausr_it);
+				}
 				files.erase(datausr_it);
 			}
 		}
@@ -131,13 +141,14 @@ ResourceLoader::ResourceLoader() {
 				}
 			}
 
-			SearchMan.listMatchingMembers(files, "local.m4b");
+			SearchMan.listMatchingMembers(files, "patch.m4b");
 			SearchMan.listMatchingMembers(files, "i9n.m4b");
 			SearchMan.listMatchingMembers(files, "art???.m4b");
 			SearchMan.listMatchingMembers(files, "lip.m4b");
 			SearchMan.listMatchingMembers(files, "local.m4b");
 			SearchMan.listMatchingMembers(files, "sfx.m4b");
 			SearchMan.listMatchingMembers(files, "voice???.m4b");
+			SearchMan.listMatchingMembers(files, "music?.m4b");
 		}
 	}
 
@@ -151,31 +162,17 @@ ResourceLoader::ResourceLoader() {
 		filename.toLowercase();
 
 		//Avoid duplicates
-		if (_files.hasArchive(filename))
+		if (SearchMan.hasArchive(filename))
 			continue;
 
 		l = new Lab();
 		if (l->open(filename))
-			_files.add(filename, l, priority--, true);
+			SearchMan.add(filename, l, priority--, true);
 		else
 			delete l;
 	}
 
 	files.clear();
-
-	loadPatches();
-}
-
-void ResourceLoader::loadPatches() {
-	Common::ArchiveMemberList patches;
-	_patches.clear();
-	_files.listMatchingMembers(patches, "*.patchr");
-	SearchMan.listMatchingMembers(patches, "*.patchr");
-	for (Common::ArchiveMemberList::const_iterator x = patches.begin(); x != patches.end(); ++x) {
-		Common::String filename = (*x)->getName();
-		filename = Common::String(filename.c_str(), filename.size() - 7); //remove the .patchr extension
-		_patches.push_back(filename);
-	}
 }
 
 template<typename T>
@@ -200,10 +197,10 @@ ResourceLoader::~ResourceLoader() {
 }
 
 static int sortCallback(const void *entry1, const void *entry2) {
-	return scumm_stricmp(((ResourceLoader::ResourceCache *)entry1)->fname, ((ResourceLoader::ResourceCache *)entry2)->fname);
+	return scumm_stricmp(((const ResourceLoader::ResourceCache *)entry1)->fname, ((const ResourceLoader::ResourceCache *)entry2)->fname);
 }
 
-Common::SeekableReadStream *ResourceLoader::getFileFromCache(const Common::String &filename) {
+Common::SeekableReadStream *ResourceLoader::getFileFromCache(const Common::String &filename) const {
 	ResourceLoader::ResourceCache *entry = getEntryFromCache(filename);
 	if (!entry)
 		return NULL;
@@ -212,7 +209,7 @@ Common::SeekableReadStream *ResourceLoader::getFileFromCache(const Common::Strin
 
 }
 
-ResourceLoader::ResourceCache *ResourceLoader::getEntryFromCache(const Common::String &filename) {
+ResourceLoader::ResourceCache *ResourceLoader::getEntryFromCache(const Common::String &filename) const {
 	if (_cache.empty())
 		return NULL;
 
@@ -227,24 +224,18 @@ ResourceLoader::ResourceCache *ResourceLoader::getEntryFromCache(const Common::S
 	return (ResourceLoader::ResourceCache *)bsearch(&key, _cache.begin(), _cache.size(), sizeof(ResourceCache), sortCallback);
 }
 
-bool ResourceLoader::getFileExists(const Common::String &filename) {
-	return _files.hasFile(filename);
-}
-
-Common::SeekableReadStream *ResourceLoader::loadFile(Common::String &filename) {
+Common::SeekableReadStream *ResourceLoader::loadFile(const Common::String &filename) const {
 	Common::SeekableReadStream *rs = NULL;
-	if (_files.hasFile(filename))
-		rs = _files.createReadStreamForMember(filename);
-	else if (SearchMan.hasFile(filename))
+	if (SearchMan.hasFile(filename))
 		rs = SearchMan.createReadStreamForMember(filename);
 	else
 		return NULL;
 
-	//Patch a file, if needed
-	if ((Common::find(_patches.begin(), _patches.end(), filename)) != _patches.end()) {
+	Common::String patchfile = filename + ".patchr";
+	if (SearchMan.hasFile(patchfile)) {
 		Debug::debug(Debug::Patchr, "Patch requested for %s", filename.c_str());
 		Patchr p;
-		p.loadPatch(openNewStreamFile(filename + ".patchr"));
+		p.loadPatch(SearchMan.createReadStreamForMember(patchfile));
 		bool success = p.patchFile(rs, filename);
 		if (success)
 			Debug::debug(Debug::Patchr, "%s successfully patched", filename.c_str());
@@ -252,10 +243,11 @@ Common::SeekableReadStream *ResourceLoader::loadFile(Common::String &filename) {
 			warning("Patching of %s failed", filename.c_str());
 		rs->seek(0, SEEK_SET);
 	}
+
 	return rs;
 }
 
-Common::SeekableReadStream *ResourceLoader::openNewStreamFile(Common::String fname, bool cache) {
+Common::SeekableReadStream *ResourceLoader::openNewStreamFile(Common::String fname, bool cache) const {
 	Common::SeekableReadStream *s;
     fname.toLowercase();
 
@@ -280,7 +272,7 @@ Common::SeekableReadStream *ResourceLoader::openNewStreamFile(Common::String fna
 	return Common::wrapCompressedReadStream(s);
 }
 
-void ResourceLoader::putIntoCache(const Common::String &fname, byte *res, uint32 len) {
+void ResourceLoader::putIntoCache(const Common::String &fname, byte *res, uint32 len) const {
 	ResourceCache entry;
 	entry.resPtr = res;
 	entry.len = len;
@@ -289,22 +281,6 @@ void ResourceLoader::putIntoCache(const Common::String &fname, byte *res, uint32
 	_cacheMemorySize += len;
 	_cache.push_back(entry);
 	_cacheDirty = true;
-}
-
-Bitmap *ResourceLoader::loadBitmap(const Common::String &filename) {
-	Common::String fname = filename;
-	fname.toLowercase();
-
-	Common::SeekableReadStream *stream = openNewStreamFile(fname.c_str(), true);
-	if (!stream) {	// Grim sometimes asks for non-existant bitmaps (eg, ha_overhead)
-		warning("Could not find bitmap %s", filename.c_str());
-		return NULL;
-	}
-
-	Bitmap *result = new Bitmap(filename, stream);
-	delete stream;
-
-	return result;
 }
 
 CMap *ResourceLoader::loadColormap(const Common::String &filename) {
@@ -344,10 +320,15 @@ Costume *ResourceLoader::loadCostume(const Common::String &filename, Costume *pr
 	if (!stream) {
 		error("Could not find costume \"%s\"", filename.c_str());
 	}
-
-	Costume *result = new Costume(filename, stream, prevCost);
+	Costume *result;
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		result = new EMICostume(filename, prevCost);		
+	} else {
+		result = new Costume(filename, prevCost);
+	}
+	result->load(stream);
 	delete stream;
-
+	
 	return result;
 }
 
@@ -463,7 +444,23 @@ Skeleton *ResourceLoader::loadSkeleton(const Common::String &filename) {
 	return result;
 }
 
-void ResourceLoader::uncache(const char *filename) {
+AnimationEmi *ResourceLoader::loadAnimationEmi(const Common::String &filename) {
+	Common::String fname = fixFilename(filename);
+	Common::SeekableReadStream *stream;
+	
+	stream = openNewStreamFile(fname.c_str(), true);
+	if(!stream) {
+		warning("Could not find animation %s", filename.c_str());
+		return NULL;
+	}
+	
+	AnimationEmi *result = new AnimationEmi(filename, stream);
+	delete stream;
+
+	return result;
+}
+
+void ResourceLoader::uncache(const char *filename) const {
 	Common::String fname = filename;
 	fname.toLowercase();
 
@@ -504,7 +501,7 @@ ModelPtr ResourceLoader::getModel(const Common::String &fname, CMap *c) {
 	filename.toLowercase();
 	for (Common::List<Model *>::const_iterator i = _models.begin(); i != _models.end(); ++i) {
 		Model *m = *i;
-		if (filename == m->_fname && *m->_cmap == *c) {
+		if (filename == m->getFilename() && *m->getCMap() == *c) {
 			return m;
 		}
 	}

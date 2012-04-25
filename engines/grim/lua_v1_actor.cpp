@@ -20,10 +20,11 @@
  *
  */
 
+#include "common/foreach.h"
+
 #include "engines/grim/grim.h"
 #include "engines/grim/lua_v1.h"
 #include "engines/grim/actor.h"
-#include "engines/grim/lipsync.h"
 #include "engines/grim/costume.h"
 #include "engines/grim/set.h"
 #include "engines/grim/model.h"
@@ -81,8 +82,7 @@ void Lua_V1::SetActorTalkColor() {
 	if (!lua_isuserdata(colorObj) && lua_tag(colorObj) != MKTAG('C','O','L','R'))
 		return;
 	Actor *actor = getactor(actorObj);
-	PoolColor *color = getcolor(colorObj);
-	actor->setTalkColor(color);
+	actor->setTalkColor(getcolor(colorObj));
 }
 
 void Lua_V1::GetActorTalkColor() {
@@ -92,7 +92,7 @@ void Lua_V1::GetActorTalkColor() {
 		return;
 	}
 	Actor *actor = getactor(actorObj);
-	lua_pushusertag(actor->getTalkColor()->getId(), MKTAG('C','O','L','R'));
+	lua_pushusertag(actor->getTalkColor().toEncodedValue(), MKTAG('C','O','L','R'));
 }
 
 void Lua_V1::SetActorRestChore() {
@@ -449,21 +449,6 @@ void Lua_V1::PutActorInSet() {
 	if (!lua_isstring(setObj) && !lua_isnil(setObj))
 		return;
 
-	if (actor->_toClean) {
-		actor->_toClean = false;
-
-		// FIXME HACK: This hack allows manny to exit from the sets where actors are freezed
-		// (and though ActorToClean is called), otherwise the set will never change and manny
-		// will be trapped inside. I'm aware this is really ugly, but i could not come up
-		// with a better solution, since the bug here seems to be inside the lua scripts, and
-		// not in the engine. If you want to have a look, the important bits are in:
-		// _system.LUA, TrackManny()
-		// _actors.LUA, put_in_set(), freeze() and stamp()
-		// Be aware that is not needed for the OpenGL renderer.
-		lua_call("reset_doorman");
-		return;
-	}
-
 	const char *set = lua_getstring(setObj);
 
 	// FIXME verify adding actor to set
@@ -611,10 +596,9 @@ void Lua_V1::ActorToClean() {
 
 	Actor *actor = getactor(actorObj);
 
-	// TODO: It seems this function should load/create an image to be used in place
-	// of the real actor until it is put in the set again.
-	// For now this Actor::_toClean is used to leave the actor in the set.
-	actor->_toClean = true;
+	g_driver->selectCleanBuffer();
+	actor->draw();
+	g_driver->selectScreenBuffer();
 }
 
 void Lua_V1::IsActorMoving() {
@@ -662,9 +646,11 @@ void Lua_V1::GetActorNodeLocation() {
 	ModelNode *allNodes = actor->getCurrentCostume()->getModelNodes();
 	ModelNode *node = allNodes + nodeId;
 
+	node->_needsUpdate = true;
 	ModelNode *root = node;
 	while (root->_parent) {
 		root = root->_parent;
+		root->_needsUpdate = true;
 	}
 
 	Math::Matrix4 matrix;
@@ -1419,9 +1405,7 @@ void Lua_V1::GetVisibleThings() {
 	lua_Object result = lua_createtable();
 
 	// TODO verify code below
-	foreach (Actor *a, Actor::getPool()) {
-		if (!a->isInSet(g_grim->getSetName()))
-			continue;
+	foreach (Actor *a, g_grim->getActiveActors()) {
 		// Consider the active actor visible
 		if (actor == a || actor->getYawTo(a) < 90) {
 			lua_pushobject(result);
@@ -1542,6 +1526,13 @@ void Lua_V1::SetActorShadowValid() {
 	warning("SetActorShadowValid(%d) unknown purpose", valid);
 
 	actor->setShadowValid(valid);
+}
+
+void Lua_V1::GetActorRect() {
+	// This function is only used in one place and it is only checked if the return value is nil or not.
+	// Looking at how it is used I don't see any reason to ever return nil.
+	// If it does not return nil, the light that comes out of Chepito's lantern move properly.
+	lua_pushnumber(1);
 }
 
 } // end of namespace Grim

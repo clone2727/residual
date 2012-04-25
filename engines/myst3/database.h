@@ -42,6 +42,8 @@ struct NodeData
 	int16 id;
 	Common::Array<CondScript> scripts;
 	Common::Array<HotSpot> hotspots;
+	Common::Array<CondScript> soundScripts;
+	Common::Array<CondScript> backgroundSoundScripts;
 };
 
 // Nodes are using ref counting pointers since they can be
@@ -70,13 +72,16 @@ struct AgeData
 	Common::Array<RoomData> rooms;
 };
 
+class Myst3Engine;
+struct ExecutableVersion;
+
 class Database
 {
 public:
 	/**
 	 * Initialize the database from an executable file
 	 */
-	Database();
+	Database(Myst3Engine *vm);
 
 	/**
 	 * Loads a room's nodes into the database
@@ -118,18 +123,8 @@ public:
 	 */
 	Common::String getSoundName(uint32 id);
 private:
-	struct GameVersion {
-		const char *description;
-		Common::Platform platform;
-		const char *md5;
-		uint32 baseOffset;
-		uint32 ageTableOffset;
-		uint32 nodeInitScriptOffset;
-		uint32 soundNamesOffset;
-	};
-
-	Common::String _exePath;
-	GameVersion *_gameVersion;
+	Myst3Engine *_vm;
+	const ExecutableVersion *_executableVersion;
 
 	Common::Array<AgeData> _ages;
 
@@ -143,6 +138,8 @@ private:
 
 	RoomData *findRoomData(const uint32 &roomID);
 	Common::Array<NodePtr> loadRoomScripts(RoomData *room);
+	void loadRoomNodeScripts(Common::SeekableSubReadStreamEndian *file, Common::Array<NodePtr> &nodes);
+	void loadRoomSoundScripts(Common::SeekableSubReadStreamEndian *file, Common::Array<NodePtr> &nodes, bool background);
 	void preloadCommonRooms();
 
 	Common::Array<AgeData> loadAges(Common::ReadStreamEndian &s);

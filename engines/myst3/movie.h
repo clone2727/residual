@@ -34,6 +34,7 @@ namespace Myst3 {
 struct VideoData;
 class Myst3Engine;
 class Texture;
+class Subtitles;
 
 class Movie : public Drawable {
 public:
@@ -41,15 +42,20 @@ public:
 	virtual ~Movie();
 
 	virtual void draw();
-	void drawForce2d();
+	virtual void drawOverlay();
 
 	uint16 getId() { return _id; }
+	void setPosU(int32 v) { _posU = v; }
+	void setPosV(int32 v) { _posV = v; }
+	void setForce2d(bool b) { _force2d = b; }
 	void setStartFrame(int32 v) { _startFrame = v; }
 	void setEndFrame(int32 v) { _endFrame = v; }
+
 protected:
 	Myst3Engine *_vm;
 
 	uint16 _id;
+	Subtitles *_subtitles;
 
 	Math::Vector3d _pTopLeft;
 	Math::Vector3d _pBottomLeft;
@@ -79,15 +85,14 @@ public:
 	virtual ~ScriptedMovie();
 
 	void draw();
+	void drawOverlay();
 	virtual void update();
 
 	void setEndFrameVar(uint16 v) { _endFrameVar = v; }
 	void setNextFrameReadVar(uint16 v) { _nextFrameReadVar = v; }
 	void setNextFrameWriteVar(uint16 v) { _nextFrameWriteVar = v; }
 	void setPlayingVar(uint16 v) { _playingVar = v; }
-	void setPosU(int32 v) { _posU = v; }
 	void setPosUVar(uint16 v) { _posUVar = v; }
-	void setPosV(int32 v) { _posV = v; }
 	void setPosVVar(uint16 v) { _posVVar = v; }
 	void setStartFrameVar(uint16 v) { _startFrameVar = v; }
 	void setCondition(int16 condition) { _condition = condition; }
@@ -95,7 +100,6 @@ public:
 	void setDisableWhenComplete(bool upd) { _disableWhenComplete = upd; }
 	void setLoop(bool loop) { _loop = loop; }
 	void setScriptDriven(bool b) { _scriptDriven = b; }
-	void setForce2d(bool b) { _force2d = b; }
 
 protected:
 	bool _enabled;
@@ -128,6 +132,7 @@ public:
 	void setSynchronized(bool b) { _synchronized = b; }
 private:
 	bool _synchronized;
+	uint _startEngineFrame;
 };
 
 // Used by the projectors on J'nanin, see puzzle #14

@@ -36,14 +36,9 @@
 #include "engines/grim/movie/codecs/blocky8.h"
 #include "engines/grim/movie/codecs/blocky16.h"
 #include "engines/grim/movie/codecs/smush_decoder.h"
-
-#ifdef USE_SMUSH
+#include "engines/grim/movie/codecs/vima.h"
 
 namespace Grim {
-
-// Prototypes to avoid depending on grim.h
-void vimaInit(uint16 *destTable);
-void decompressVima(const byte *src, int16 *dest, int destLen, uint16 *destTable);
 
 #define ANNO_HEADER "MakeAnim animation type 'Bl16' parameters: "
 #define BUFFER_SIZE 16385
@@ -375,15 +370,14 @@ void SmushDecoder::handleFramesHeader() {
 
 bool SmushDecoder::setupAnimDemo() {
 	uint32 tag;
-	int32 size;
 
 	tag = _file->readUint32BE();
 	assert(tag == MKTAG('A','N','I','M'));
-	size = _file->readUint32BE();
+	_file->readUint32BE();
 
 	tag = _file->readUint32BE();
 	assert(tag == MKTAG('A','H','D','R'));
-	size = _file->readUint32BE();
+	_file->readUint32BE();
 
 	_file->readUint16BE(); // version
 	_nbframes = _file->readUint16LE();
@@ -570,5 +564,3 @@ uint32 SmushDecoder::getTimeToNextFrame() const {
 }
 
 } // end of namespace Grim
-
-#endif // USE_SMUSH

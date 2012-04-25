@@ -38,14 +38,10 @@ void Scene::updateCamera(Common::Point &mouse) {
 	float pitch = _vm->_state->getLookAtPitch();
 	float heading = _vm->_state->getLookAtHeading();
 
-	pitch -= mouse.y / 3.0f;
-	heading += mouse.x / 3.0f;
-
-	// Keep heading in 0..360 range
-	if (heading > 360.0f)
-		heading -= 360.0f;
-	else if (heading < 0.0f)
-		heading += 360.0f;
+	if (!_vm->_state->getCursorLocked()) {
+		pitch -= mouse.y / 3.0f;
+		heading += mouse.x / 3.0f;
+	}
 
 	// Keep heading within allowed values
 	if (_vm->_state->isCameraLimited()) {
@@ -56,8 +52,8 @@ void Scene::updateCamera(Common::Point &mouse) {
 			heading = CLIP(heading, minHeading, maxHeading);
 		} else {
 			if (heading < minHeading && heading > maxHeading) {
-				uint distToMin = abs(heading - minHeading);
-				uint distToMax = abs(heading - maxHeading);
+				uint distToMin = (uint)ABS(heading - minHeading);
+				uint distToMax = (uint)ABS(heading - maxHeading);
 				if (distToMin > distToMax)
 					heading = maxHeading;
 				else
@@ -65,6 +61,12 @@ void Scene::updateCamera(Common::Point &mouse) {
 			}
 		}
 	}
+
+	// Keep heading in 0..360 range
+	if (heading > 360.0f)
+		heading -= 360.0f;
+	else if (heading < 0.0f)
+		heading += 360.0f;
 
 	// Keep pitch within allowed values
 	float minPitch = _vm->_state->getCameraMinPitch();
@@ -78,15 +80,15 @@ void Scene::updateCamera(Common::Point &mouse) {
 	pitch = CLIP(pitch, minPitch, maxPitch);
 
 	_vm->_state->lookAt(pitch, heading);
-	_vm->_state->setCameraPitch(pitch);
-	_vm->_state->setCameraHeading(heading);
+	_vm->_state->setCameraPitch((int32)pitch);
+	_vm->_state->setCameraHeading((int32)heading);
 }
 
 void Scene::drawBlackBorders() {
-	Common::Rect top = Common::Rect(Renderer::kOriginalWidth, kTopBorderHeight);
+	Common::Rect top = Common::Rect(Renderer::kOriginalWidth, Renderer::kTopBorderHeight);
 
-	Common::Rect bottom = Common::Rect(Renderer::kOriginalWidth, kBottomBorderHeight);
-	bottom.translate(0, kTopBorderHeight + kFrameHeight);
+	Common::Rect bottom = Common::Rect(Renderer::kOriginalWidth, Renderer::kBottomBorderHeight);
+	bottom.translate(0, Renderer::kTopBorderHeight + Renderer::kFrameHeight);
 
 	uint32 black = Graphics::ARGBToColor< Graphics::ColorMasks<8888> >(255, 0, 0, 0);
 	_vm->_gfx->drawRect2D(top, black);
@@ -94,10 +96,10 @@ void Scene::drawBlackBorders() {
 }
 
 void Scene::drawSunspotFlare(const SunSpot &s) {
-	Common::Rect frame = Common::Rect(Renderer::kOriginalWidth, kFrameHeight);
-	frame.translate(0, kTopBorderHeight);
+	Common::Rect frame = Common::Rect(Renderer::kOriginalWidth, Renderer::kFrameHeight);
+	frame.translate(0, Renderer::kTopBorderHeight);
 
-	uint8 a = s.intensity * s.radius;
+	uint8 a = (uint8)(s.intensity * s.radius);
 	uint8 r, g, b;
 	Graphics::colorToRGB< Graphics::ColorMasks<888> >(s.color, r, g, b);
 	uint32 color = Graphics::ARGBToColor< Graphics::ColorMasks<8888> >(a, r, g, b);

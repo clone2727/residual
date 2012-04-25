@@ -18,8 +18,6 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  *
- * $URL$
- * $Id$
  */
 
 #include "common/streamdebug.h"
@@ -52,7 +50,7 @@ Debug::Debug(const Debug &other) {
 
 Debug::~Debug() {
 	if (--_stream->ref == 0) {
-		debug(_stream->level, _stream->msg.c_str());
+		debug(_stream->level, "%s", _stream->msg.c_str());
 		delete _stream;
 	}
 }

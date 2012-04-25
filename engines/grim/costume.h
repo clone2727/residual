@@ -23,7 +23,7 @@
 #ifndef GRIM_COSTUME_H
 #define GRIM_COSTUME_H
 
-#include "common/memstream.h"
+#include "common/str.h"
 
 #include "math/matrix4.h"
 
@@ -44,12 +44,10 @@ class Head;
 
 class Costume : public Object {
 public:
-	Costume(const Common::String &filename, Common::SeekableReadStream *data, Costume *prevCost);
-
-	void loadGRIM(TextSplitter &ts, Costume *prevCost);
-	void loadEMI(Common::SeekableReadStream *data, Costume *prevCost);
+	Costume(const Common::String &filename, Costume *prevCost);
 
 	virtual ~Costume();
+	virtual void load(Common::SeekableReadStream *data);
 
 	const Common::String &getFilename() const { return _fname; }
 	void playChore(const char *name);
@@ -69,6 +67,8 @@ public:
 	int isChoring(bool excludeLooping);
 	int getNumChores() const { return _numChores; }
 	Chore *getChore(const char *name);
+	Chore *getChore(int i) { return _chores[i]; }
+	int getChoreId(const char *name);
 
 	void setHead(int joint1, int joint2, int joint3, float maxRoll, float maxPitch, float maxYaw);
 	void setLookAtRate(float rate);
@@ -77,23 +77,26 @@ public:
 
 	CMap *getCMap() { return _cmap; }
 
-	int update(uint frameTime);
+	virtual int update(uint frameTime);
 	void animate();
 	void setupTextures();
-	void draw();
+	virtual void draw();
 	void getBoundingBox(int *x1, int *y1, int *x2, int *y2);
-	void setPosRotate(Math::Vector3d pos, const Math::Angle &pitch,
+	void setPosRotate(const Math::Vector3d &pos, const Math::Angle &pitch,
 					  const Math::Angle &yaw, const Math::Angle &roll);
 	Math::Matrix4 getMatrix() const;
 
 	Costume *getPreviousCostume() const;
 
-	void saveState(SaveGame *state) const;
-	bool restoreState(SaveGame *state);
+	virtual void saveState(SaveGame *state) const;
+	virtual bool restoreState(SaveGame *state);
 
-private:
-	Component *loadComponent(tag32 tag, Component *parent, int parentID, const char *name, Component *prevComponent);
-	Component *loadComponentEMI(Component *parent, int parentID, const char *name, Component *prevComponent);
+	Component *getComponent(int num) { return _components[num]; }
+protected:
+	virtual Component *loadComponent(tag32 tag, Component *parent, int parentID, const char *name, Component *prevComponent);
+
+	void load(TextSplitter &ts, Costume *prevCost);
+
 	ModelComponent *getMainModelComponent() const;
 
 	Common::String _fname;

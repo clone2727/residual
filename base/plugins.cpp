@@ -113,7 +113,8 @@ public:
 		LINK_PLUGIN(DMEDIA)
 		#endif
 		#if defined(__amigaos4__)
-		LINK_PLUGIN(CAMD)
+//ResidualVM: disabled below
+//		LINK_PLUGIN(CAMD)
 		#endif
 		#if defined(MACOSX)
 		LINK_PLUGIN(COREAUDIO)
@@ -129,6 +130,7 @@ public:
 		LINK_PLUGIN(EAS)
 		#endif
 		LINK_PLUGIN(ADLIB)
+//ResidualVM: disabled belows
 //		LINK_PLUGIN(PCSPK)
 //		LINK_PLUGIN(PCJR)
 		LINK_PLUGIN(CMS)
@@ -259,8 +261,6 @@ void PluginManagerUncached::init() {
 	unloadAllPlugins();
 	_allEnginePlugins.clear();
 
-	// Resize our pluginsInMem list to prevent fragmentation
-	_pluginsInMem[PLUGIN_TYPE_ENGINE].resize(2);
 	unloadPluginsExcept(PLUGIN_TYPE_ENGINE, NULL, false);	// empty the engine plugins
 
 	for (ProviderList::iterator pp = _providers.begin();

@@ -25,6 +25,7 @@
 
 #include "engines/grim/pool.h"
 #include "engines/grim/object.h"
+#include "engines/grim/color.h"
 #include "math/vector3d.h"
 #include "math/angle.h"
 
@@ -35,8 +36,8 @@ class Sector;
 class Costume;
 class LipSync;
 class Font;
-class PoolColor;
 class Set;
+struct Joint;
 
 struct Plane {
 	Common::String setName;
@@ -44,6 +45,8 @@ struct Plane {
 };
 
 typedef Common::List<Plane> SectorListType;
+
+#define MAX_SHADOWS 5
 
 struct Shadow {
 	Common::String name;
@@ -60,12 +63,18 @@ struct Shadow {
  *
  * @short Actor represents a 3D character on screen.
  */
-class Actor : public PoolObject<Actor, MKTAG('A', 'C', 'T', 'R')> {
+class Actor : public PoolObject<Actor> {
 public:
 	enum CollisionMode {
 		CollisionOff = 0,
 		CollisionBox = 1,
 		CollisionSphere = 2
+	};
+
+	enum AlphaMode {
+		AlphaOff = -1,
+		AlphaReplace = 2,
+		AlphaModulate = 3 // Seems to be unused
 	};
 
 	/**
@@ -83,6 +92,8 @@ public:
 	 * The actor is automatically removed from the GrimEngine instance.
 	 */
 	~Actor();
+
+	static int32 getStaticTag() { return MKTAG('A', 'C', 'T', 'R'); }
 
 	/**
 	 * Saves the actor state.
@@ -108,13 +119,13 @@ public:
 	 * @param color The color.
 	 * @see getTalkColor
 	 */
-	void setTalkColor(PoolColor *color) { _talkColor = color; }
+	void setTalkColor(const Color &color) { _talkColor = color; }
 	/**
 	 * Returns the color of the subtitles of the actor.
 	 *
 	 * @see setTalkColor
 	 */
-	PoolColor *getTalkColor() const { return _talkColor; }
+	Color getTalkColor() const { return _talkColor; }
 
 	/**
 	 * Sets the position of the actor on the 3D scene.
@@ -424,8 +435,11 @@ public:
 		_constrain = constrain;
 	}
 	void update(uint frameTime);
+	/**
+	 * Check if the actor is still talking. If it is returns true, otherwise false.
+	 */
+	bool updateTalk(uint frameTime);
 	void draw();
-	void undraw(bool);
 
 	bool isLookAtVectorZero() {
 		return _lookAtVector.isZero();
@@ -433,7 +447,7 @@ public:
 	void setLookAtVectorZero() {
 		_lookAtVector.set(0.f, 0.f, 0.f);
 	}
-	void setLookAtVector(Math::Vector3d vector) {
+	void setLookAtVector(const Math::Vector3d &vector) {
 		_lookAtVector = vector;
 	}
 	Math::Vector3d getLookAtVector() {
@@ -448,7 +462,19 @@ public:
 
 	bool handleCollisionWith(Actor *actor, CollisionMode mode, Math::Vector3d *vec) const;
 
-	bool _toClean;
+	static void saveStaticState(SaveGame *state);
+	static void restoreStaticState(SaveGame *state);
+
+	bool isAttached() const { return _attachedActor != NULL; }
+	Math::Vector3d getWorldPos() const;
+	void attachToActor(Actor *other, const char *joint);
+	void detach();
+
+	void setInOverworld(bool inOverworld) { _inOverworld = inOverworld; }
+	bool isInOverworld() { return _inOverworld; }
+
+	void setGlobalAlpha(float alpha) { _globalAlpha = alpha; }
+	void setAlphaMode(AlphaMode mode) { _alphaMode = mode; }
 
 private:
 	void costumeMarkerCallback(int marker);
@@ -470,10 +496,12 @@ private:
 	 */
 	Math::Vector3d getTangentPos(const Math::Vector3d &pos, const Math::Vector3d &dest) const;
 
+	Math::Vector3d getSimplePuckVector() const;
+
 	Common::String _name;
 	Common::String _setName;    // The actual current set
 
-	PoolColor *_talkColor;
+	Color _talkColor;
 	Math::Vector3d _pos;
 	Math::Angle _pitch, _yaw, _roll;
 	float _walkRate, _turnRate;
@@ -485,12 +513,19 @@ private:
 	float _timeScale;
 	bool _lookingMode;
 	Common::String _talkSoundName;
+	bool _talking;
+	bool _backgroundTalk;
 	ObjectPtr<LipSync> _lipSync;
 	Common::List<Costume *> _costumeStack;
 
 	// Variables for gradual turning
 	bool _turning;
-	Math::Angle _destYaw;
+	// NOTE: The movement direction is separate from the direction
+	// the actor's model is facing. The model's direction is gradually
+	// updated to match the movement direction. This produces a smooth
+	// turning animation while still allowing the actor to move in a
+	// new direction immediately after reflecting off a wall.
+	Math::Angle _moveYaw;
 
 	// Variables for walking to a point
 	bool _walking;
@@ -569,6 +604,15 @@ private:
 	float _collisionScale;
 
 	bool _puckOrient;
+
+	static bool _isTalkingBackground;
+	int _talkDelay;
+	Actor *_attachedActor;
+	Common::String _attachedJoint;
+	AlphaMode _alphaMode;
+	float _globalAlpha;
+
+	bool _inOverworld;
 
 	friend class GrimEngine;
 };

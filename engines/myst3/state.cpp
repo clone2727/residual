@@ -31,10 +31,13 @@ GameState::GameState(Myst3Engine *vm):
 
 #define VAR(var, x, unk) _descriptions.setVal(var, Description(var, #x, unk));
 
+	VAR(14, CursorTransparency, false)
+
 	VAR(47, ProjectorAngleX, true)
 	VAR(48, ProjectorAngleY, true)
 	VAR(49, ProjectorAngleZoom, true)
 	VAR(50, ProjectorAngleBlur, true)
+	VAR(51, DraggedWeight, true)
 
 	VAR(57, DragEnded, true)
 	VAR(58, DragLeverSpeed, false)
@@ -51,11 +54,22 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(68, MenuSavedRoom, false)
 	VAR(69, MenuSavedNode, false)
 
+	VAR(70, SecondsCountdown, true)
 	VAR(71, FrameCountdown, true)
+
+	VAR(84, InputMousePressed, false)
+	VAR(88, InputEscapePressed, false)
+	VAR(89, InputTildePressed, false)
+	VAR(90, InputSpacePressed, false)
+
+	VAR(92, HotspotActiveRect, false)
 
 	VAR(115, SunspotIntensity, false)
 	VAR(116, SunspotColor, false)
 	VAR(117, SunspotRadius, false)
+
+	VAR(131, CursorLocked, false)
+	VAR(132, CursorHidden, false)
 
 	VAR(136, CameraPitch, false)
 	VAR(137, CameraHeading, false)
@@ -66,7 +80,7 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(143, MovieOverrideEndFrame, true)
 	VAR(144, MovieVolume1, true)
 	VAR(145, MovieVolume2, true)
-	VAR(146, MovieUnk146, true)
+	VAR(146, MovieOverrideSubtitles, false)
 	VAR(147, MovieUnk147, true)
 	VAR(148, MovieUnk148, true)
 	VAR(149, MovieConditionBit, true)
@@ -96,10 +110,20 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(173, MoviePlayingVar, true)
 
 	VAR(178, MovieUseBackground, false)
+	VAR(179, CameraSkipAnimation, true)
+
+	VAR(185, CameraMoveSpeed, false)
 
 	VAR(189, LocationNextNode, false)
 	VAR(190, LocationNextRoom, false)
 	VAR(191, LocationNextAge, false)
+
+	VAR(195, BallPosition, false)
+	VAR(196, BallFrame, false)
+	VAR(197, BallLeverLeft, false)
+	VAR(198, BallLeverRight, false)
+
+	VAR(228, BallDoorOpen, false)
 
 	VAR(243, ProjectorX, false)
 	VAR(244, ProjectorY, false)
@@ -117,8 +141,33 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(282, JournalSaavedroLastPage, false)
 	VAR(283, JournalSaavedroChapter, false)
 	VAR(284, JournalSaavedroPageInChapter, false)
+
+	VAR(329, TeslaAllAligned, false)
+	VAR(330, TeslaTopAligned, false)
+	VAR(331, TeslaMiddleAligned, false)
+	VAR(332, TeslaBottomAligned, false)
+	VAR(333, TeslaMovieStart, false)
+
+	VAR(444, ResonanceRingsSolved, false)
+
+	VAR(460, PinballRemainingPegs, false)
+
 	VAR(480, BookStateTomahna, false)
 	VAR(481, BookStateReleeshahn, false)
+
+	VAR(489, SymbolCode2Solved, false)
+	VAR(495, SymbolCode1AllSolved, false)
+	VAR(496, SymbolCode1CurrentSolved, false)
+	VAR(497, SymbolCode1TopSolved, false)
+	VAR(502, SymbolCode1LeftSolved, false)
+	VAR(507, SymbolCode1RightSolved, false)
+
+	VAR(1322, ZipModeEnabled, false)
+	VAR(1323, SubtitlesEnabled, false)
+	VAR(1324, WaterEffects, false)
+	VAR(1325, TransitionSpeed, false)
+	VAR(1326, MouseSpeed, false)
+	VAR(1327, DialogResult, false)
 
 	VAR(1337, MenuEscapePressed, false)
 	VAR(1338, MenuNextAction, false)
@@ -131,6 +180,15 @@ GameState::GameState(Myst3Engine *vm):
 	VAR(1351, MenuSaveLoadPageRight, false)
 	VAR(1352, MenuSaveLoadSelectedItem, false)
 	VAR(1353, MenuSaveLoadCurrentPage, false)
+
+	VAR(1374, OverallVolume, false)
+	VAR(1377, MusicVolume, false)
+	VAR(1380, MusicFrequency, false)
+	VAR(1393, LanguageAudio, false)
+	VAR(1394, LanguageText, false)
+
+	VAR(1396, HotspotHovered, false)
+	VAR(1397, SpotSubtitle, false)
 
 	VAR(1399, DragLeverLimited, true)
 	VAR(1400, DragLeverLimitMin, true)
@@ -150,8 +208,8 @@ void GameState::syncWithSaveGame(Common::Serializer &s) {
 
 	s.syncAsUint32LE(_data.gameRunning);
 	s.syncAsUint32LE(_data.currentFrame);
-	s.syncAsUint32LE(_data.dword_4C2C3C);
-	s.syncAsUint32LE(_data.dword_4C2C40);
+	s.syncAsUint32LE(_data.nextSecondsUpdate);
+	s.syncAsUint32LE(_data.secondsPlayed);
 	s.syncAsUint32LE(_data.dword_4C2C44);
 	s.syncAsUint32LE(_data.dword_4C2C48);
 	s.syncAsUint32LE(_data.dword_4C2C4C);
@@ -204,12 +262,17 @@ bool GameState::load(const Common::String &file) {
 	syncWithSaveGame(s);
 	delete saveFile;
 
+	_data.gameRunning = true;
+
 	return true;
 }
 
 bool GameState::save(Common::OutSaveFile *saveFile) {
 	Common::Serializer s = Common::Serializer(0, saveFile);
+
+	_data.gameRunning = false;
 	syncWithSaveGame(s);
+	_data.gameRunning = true;
 
 	return true;
 }
@@ -256,6 +319,24 @@ void GameState::setVar(uint16 var, int32 value) {
 bool GameState::evaluate(int16 condition) {
 	uint16 unsignedCond = abs(condition);
 	uint16 var = unsignedCond & 2047;
+
+	switch (var) {
+	case 84:
+		setInputMousePressed(_vm->inputValidatePressed());
+		break;
+	case 88:
+		setInputEscapePressed(_vm->inputEscapePressed());
+		break;
+	case 89:
+		setInputTildePressed(_vm->inputTilePressed());
+		break;
+	case 90:
+		setInputSpacePressed(_vm->inputSpacePressed());
+		break;
+	default:
+		break;
+	}
+
 	int32 varValue = getVar(var);
 	int32 targetValue = (unsignedCond >> 11) - 1;
 
@@ -325,9 +406,24 @@ void GameState::limitCubeCamera(float minPitch, float maxPitch, float minHeading
 void GameState::updateFrameCounters() {
 	_data.currentFrame++;
 
+	if (!_data.gameRunning)
+		return;
+
 	int32 frameCountdown = getFrameCountdown();
 	if (frameCountdown > 0)
 		setFrameCountdown(--frameCountdown);
+
+
+	uint32 currentTime = g_system->getMillis();
+	if (currentTime > _data.nextSecondsUpdate || ABS<int32>(_data.nextSecondsUpdate - currentTime) > 2000) {
+		_data.secondsPlayed++;
+		_data.nextSecondsUpdate = currentTime + 1000;
+
+		int32 secondsCountdown = getSecondsCountdown();
+		if (secondsCountdown > 0)
+			setSecondsCountdown(--secondsCountdown);
+
+	}
 }
 
 } /* namespace Myst3 */

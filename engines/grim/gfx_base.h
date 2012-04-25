@@ -25,6 +25,10 @@
 
 #include "math/vector3d.h"
 
+#include "graphics/pixelformat.h"
+
+#include "engines/grim/material.h"
+
 namespace Graphics {
 	struct Surface;
 }
@@ -50,6 +54,15 @@ struct Sprite;
 class Light;
 class Texture;
 
+class SpecialtyMaterial : public Material {
+public:
+	SpecialtyMaterial() { _texture = NULL; }
+	~SpecialtyMaterial() { delete _texture; }
+	void create(const char *data, int width, int height);
+	virtual void select() const;
+	Texture *_texture;
+};
+
 /**
  * The Color-formats used for bitmaps in Grim Fandango/Escape From Monkey Island
  */
@@ -74,14 +87,22 @@ public:
 	virtual byte *setupScreen(int screenW, int screenH, bool fullscreen) = 0;
 
 	/**
-	 *	Query whether the current context is hardware-accelerated
+	 * Query whether the current context is hardware-accelerated
 	 *
 	 * @return true if hw-accelerated, false otherwise
 	 */
 	virtual bool isHardwareAccelerated() = 0;
+	/**
+	 * Query whether the current context is fullscreen.
+	 *
+	 * @return true if fullscreen, false otherwise
+	 */
+	virtual bool isFullscreen() { return _isFullscreen; }
+	virtual uint getScreenWidth() { return _screenWidth; }
+	virtual uint getScreenHeight() { return _screenHeight; }
 
 	virtual void setupCamera(float fov, float nclip, float fclip, float roll) = 0;
-	virtual void positionCamera(Math::Vector3d pos, Math::Vector3d interest) = 0;
+	virtual void positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest) = 0;
 
 	virtual void clearScreen() = 0;
 
@@ -91,8 +112,10 @@ public:
 	virtual void flipBuffer() = 0;
 
 	virtual void getBoundingBoxPos(const Mesh *mesh, int *x1, int *y1, int *x2, int *y2) = 0;
-	virtual void startActorDraw(Math::Vector3d pos, float scale, const Math::Angle &yaw,
-								const Math::Angle &pitch, const Math::Angle &roll) = 0;
+	virtual void startActorDraw(const Math::Vector3d &pos, float scale, const Math::Angle &yaw,
+								const Math::Angle &pitch, const Math::Angle &roll, const bool inOverworld,
+								const float alpha) = 0;
+
 	virtual void finishActorDraw() = 0;
 	virtual void setShadow(Shadow *shadow) = 0;
 	virtual void drawShadowPlanes() = 0;
@@ -145,7 +168,7 @@ public:
 	 * @see createBitmap
 	 * @see destroyBitmap
 	 */
-	virtual void drawBitmap(const Bitmap *bitmap) = 0;
+	virtual void drawBitmap(const Bitmap *bitmap, int x, int y) = 0;
 
 	/**
 	 * Deletes any internal references and representations of a bitmap
@@ -223,8 +246,18 @@ public:
 	void renderBitmaps(bool render);
 	void renderZBitmaps(bool render);
 
+	virtual void selectScreenBuffer() {}
+	virtual void selectCleanBuffer() {}
+	virtual void clearCleanBuffer() {}
+
+	virtual void createSpecialtyTextures() = 0;
+	virtual Material *getSpecialtyTexture(int n) { return &_specialty[n]; }
+
 protected:
-	int _screenWidth, _screenHeight, _screenBPP;
+	static const int _gameHeight = 480;
+	static const int _gameWidth = 640;
+	float _scaleW, _scaleH;
+	int _screenWidth, _screenHeight, _screenSize;
 	bool _isFullscreen;
 	Shadow *_currentShadowArray;
 	unsigned char _shadowColorR;
@@ -233,6 +266,8 @@ protected:
 	bool _renderBitmaps;
 	bool _renderZBitmaps;
 	bool _shadowModeActive;
+	Graphics::PixelFormat _pixelFormat;
+	SpecialtyMaterial _specialty[8];
 };
 
 // Factory-like functions:

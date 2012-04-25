@@ -23,7 +23,6 @@
 #ifndef GRIM_CHORE_H
 #define GRIM_CHORE_H
 
-#include "engines/grim/textsplit.h"
 #include "engines/grim/animation.h"
 
 #include "engines/grim/pool.h"
@@ -32,6 +31,8 @@ namespace Grim {
 
 class Costume;
 class Animation;
+class Component;
+class TextSplitter;
 
 struct TrackKey {
 	int time, value;
@@ -41,6 +42,7 @@ struct ChoreTrack {
 	int compID;
 	int numKeys;
 	TrackKey *keys;
+	Component *component;
 };
 
 class Chore {
@@ -59,8 +61,12 @@ public:
 	void cleanup();
 
 	bool isPlaying() { return _playing; }
+	bool isLooping() { return _looping; }
 
 	virtual int getId() { return _choreId; }
+	
+	void setOwner(Costume *owner) { _owner = owner; }
+	void createTracks(int num);
 
 private:
 	void setKeys(int startTime, int stopTime);
@@ -78,11 +84,13 @@ private:
 	int _currTime;
 
 	friend class Costume;
+	friend class EMICostume;
 };
 
-class PoolChore : public PoolObject<PoolChore, MKTAG('C', 'H', 'O', 'R')>, public Chore {
+class PoolChore : public PoolObject<PoolChore>, public Chore {
 public:
-	virtual int getId() { return PoolObject<PoolChore, MKTAG('C', 'H', 'O', 'R')>::getId(); }
+	virtual int getId() { return PoolObject<PoolChore>::getId(); }
+	static int32 getStaticTag() { return MKTAG('C', 'H', 'O', 'R'); }
 };
 
 } // end of namespace Grim

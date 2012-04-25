@@ -26,16 +26,17 @@
 #include "engines/grim/colormap.h"
 #include "engines/grim/costume.h"
 #include "engines/grim/textsplit.h"
-#include "engines/grim/grim.h"
 #include "engines/grim/resource.h"
 #include "engines/grim/model.h"
-
+#include "engines/grim/savegame.h"
+#include "engines/grim/emi/modelemi.h"
 #include "engines/grim/costume/chore.h"
 #include "engines/grim/costume/head.h"
+#include "engines/grim/emi/costume/emianim_component.h"
+#include "engines/grim/emi/costume/emimesh_component.h"
+#include "engines/grim/emi/costume/emiskel_component.h"
 #include "engines/grim/costume/main_model_component.h"
 #include "engines/grim/costume/colormap_component.h"
-#include "engines/grim/costume/emimesh_component.h"
-#include "engines/grim/costume/emiskel_component.h"
 #include "engines/grim/costume/keyframe_component.h"
 #include "engines/grim/costume/mesh_component.h"
 #include "engines/grim/costume/lua_var_component.h"
@@ -104,21 +105,16 @@ namespace Grim {
 // marked OBJSTATE_OVERLAY.  So the BitmapComponent just needs to pass
 // along setKey requests to the actual bitmap object.
 
-Costume::Costume(const Common::String &fname, Common::SeekableReadStream *data, Costume *prevCost) :
+Costume::Costume(const Common::String &fname, Costume *prevCost) :
 		Object(), _head(new Head()), _chores(NULL) {
 
 	_fname = fname;
 	_lookAtRate = 200;
 	_prevCostume = prevCost;
-	if (g_grim->getGameType() == GType_MONKEY4) {
-		loadEMI(data, prevCost);
-	} else {
-		TextSplitter ts(data);
-		loadGRIM(ts, prevCost);
-	}
 }
 
-void Costume::loadGRIM(TextSplitter &ts, Costume *prevCost) {
+void Costume::load(Common::SeekableReadStream *data) {
+	TextSplitter ts(data);
 	ts.expectString("costume v0.1");
 	ts.expectString("section tags");
 	int numTags;
@@ -151,7 +147,7 @@ void Costume::loadGRIM(TextSplitter &ts, Costume *prevCost) {
 		// A Parent ID of "-1" indicates that the component should
 		// use the properties of the previous costume as a base
 		if (parentID == -1) {
-			if (prevCost) {
+			if (_prevCostume) {
 				MainModelComponent *mmc;
 
 				// However, only the first item can actually share the
@@ -159,7 +155,7 @@ void Costume::loadGRIM(TextSplitter &ts, Costume *prevCost) {
 				// that component so it knows what to do
 				if (i == 0)
 					parentID = -2;
-				prevComponent = prevCost->_components[0];
+				prevComponent = _prevCostume->_components[0];
 				mmc = dynamic_cast<MainModelComponent *>(prevComponent);
 				// Make sure that the component is valid
 				if (!mmc)
@@ -201,85 +197,6 @@ void Costume::loadGRIM(TextSplitter &ts, Costume *prevCost) {
 		int which;
 		ts.scanString("chore %d", 1, &which);
 		_chores[which]->load(i, this, ts);
-	}
-}
-
-void Costume::loadEMI(Common::SeekableReadStream *data, Costume *prevCost) {
-	Common::List<Component *>components;
-
-	_numChores = data->readUint32LE();
-	_chores = new Chore *[_numChores];
-	for (int i = 0; i < _numChores; i++) {
-		_chores[i] = new PoolChore();
-		uint32 nameLength;
-		Component *prevComponent = NULL;
-		nameLength = data->readUint32LE();
-		data->read(_chores[i]->_name, nameLength);
-		float length;
-		data->read(&length, 4);
-		_chores[i]->_length = (int)length;
-
-		_chores[i]->_owner = this;
-		_chores[i]->_numTracks = data->readUint32LE();
-		_chores[i]->_tracks = new ChoreTrack[_chores[i]->_numTracks];
-
-		for (int k = 0; k < _chores[i]->_numTracks; k++) {
-			int componentNameLength = data->readUint32LE();
-			assert(componentNameLength < 64);
-
-			char name[64];
-			data->read(name, componentNameLength);
-
-			data->readUint32LE();
-			int parentID = data->readUint32LE();
-			if (parentID == -1 && prevCost) {
-				MainModelComponent *mmc;
-
-				// However, only the first item can actually share the
-				// node hierarchy with the previous costume, so flag
-				// that component so it knows what to do
-				if (i == 0)
-					parentID = -2;
-				prevComponent = prevCost->_components[0];
-				mmc = dynamic_cast<MainModelComponent *>(prevComponent);
-				// Make sure that the component is valid
-				if (!mmc)
-					prevComponent = NULL;
-			}
-			// Actually load the appropriate component
-			Component *component = loadComponentEMI(parentID < 0 ? NULL : _components[parentID], parentID, name, prevComponent);
-
-
-			//Component *component = loadComponentEMI(name, parent);
-
-			components.push_back(component);
-
-			ChoreTrack &track = _chores[i]->_tracks[k];
-			track.numKeys = data->readUint32LE();
-			track.keys = new TrackKey[track.numKeys];
-
-			// this is probably wrong
-			track.compID = 0;
-			for (int j = 0; j < track.numKeys; j++) {
-				float time, value;
-				data->read(&time, 4);
-				data->read(&value, 4);
-				track.keys[j].time = (int)time;
-				track.keys[j].value = (int)value;
-			}
-		}
-		//_chores[i]._tracks->compID;
-	}
-
-	_numComponents = components.size();
-	_components = new Component *[_numComponents];
-	int i = 0;
-	for (Common::List<Component *>::iterator it = components.begin(); it != components.end(); ++it, ++i) {
-		_components[i] = *it;
-		if (!_components[i])
-			continue;
-		_components[i]->setCostume(this);
-		_components[i]->init();
 	}
 }
 
@@ -328,54 +245,6 @@ Component *Costume::loadComponent (tag32 tag, Component *parent, int parentID, c
 	char t[4];
 	memcpy(t, &tag, sizeof(tag32));
 	warning("loadComponent: Unknown tag '%c%c%c%c', name '%s'", t[0], t[1], t[2], t[3], name);
-	return NULL;
-}
-
-Component *Costume::loadComponentEMI(Component *parent, int parentID, const char *name, Component *prevComponent) {
-	// some have an exclimation mark, this could mean something.
-	// for now, return 0 otherwise it will just crash in some other part.
-	//return 0;
-
-	assert(name[0] == '!');
-	++name;
-
-	char type[5];
-	tag32 tag = 0;
-	memcpy(&tag, name, 4);
-	memcpy(&type, name, 4);
-	type[4] = 0;
-
-	name += 4;
-
-	if (FROM_BE_32(tag) == MKTAG('m','e','s','h')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement MESH-handling: %s" , name);
-		return new EMIMeshComponent(parent, parentID, name, prevComponent, tag);
-	} else if (FROM_BE_32(tag) == MKTAG('s','k','e','l')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement SKEL-handling: %s" , name);
-		return new EMISkelComponent(parent, parentID, name, prevComponent, tag);
-	} else if (FROM_BE_32(tag) == MKTAG('t','e','x','i')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement TEXI-handling: %s" , name);
-		//return new MaterialComponent(parent, parentID, name, tag);
-	} else if (FROM_BE_32(tag) == MKTAG('a','n','i','m')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement ANIM-handling: %s" , name);
-		//return new KeyframeComponent(parent, parentID, name, tag);
-	} else if (FROM_BE_32(tag) == MKTAG('l','u','a','c')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement LUAC-handling: %s" , name);
-	} else if (FROM_BE_32(tag) == MKTAG('l','u','a','v')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement LUAV-handling: %s" , name);
-		//return new LuaVarComponent(parent, parentID, name, tag);
-	} else if (FROM_BE_32(tag) == MKTAG('s','p','r','t')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement SPRT-handling: %s" , name);
-		//return new SpriteComponent(parent, parentID, name, tag);
-	} else if (FROM_BE_32(tag) == MKTAG('s','h','a','d')) {
-		Debug::warning(Debug::Costumes, "Actor::loadComponentEMI Implement SHAD-handling: %s" , name);
-	} else {
-		error("Actor::loadComponentEMI missing tag: %s for %s", name, type);
-	}
-	/*
-	char t[4];
-	memcpy(t, &tag, sizeof(tag32));
-	warning("loadComponent: Unknown tag '%c%c%c%c', name '%s'", t[0], t[1], t[2], t[3], name);*/
 	return NULL;
 }
 
@@ -438,6 +307,15 @@ Chore *Costume::getChore(const char *name) {
 		}
 	}
 	return 0;
+}
+
+int Costume::getChoreId(const char *name) {
+	for (int i = 0; i < _numChores; ++i) {
+		if (strcmp(_chores[i]->_name, name) == 0) {
+			return i;
+		}
+	}
+	return -1;
 }
 
 void Costume::playChore(const char *name) {
@@ -602,7 +480,7 @@ float Costume::getLookAtRate() const {
 	return _lookAtRate;
 }
 
-void Costume::setPosRotate(Math::Vector3d pos, const Math::Angle &pitch,
+void Costume::setPosRotate(const Math::Vector3d &pos, const Math::Angle &pitch,
 						   const Math::Angle &yaw, const Math::Angle &roll) {
 	_matrix.setPosition(pos);
 	_matrix.buildFromPitchYawRoll(pitch, yaw, roll);
@@ -618,18 +496,18 @@ Costume *Costume::getPreviousCostume() const {
 
 void Costume::saveState(SaveGame *state) const {
 	if (_cmap) {
-		state->writeLEUint32(1);
+		state->writeBool(true);
 		state->writeString(_cmap->getFilename());
 	} else {
-		state->writeLEUint32(0);
+		state->writeBool(false);
 	}
 
 	for (int i = 0; i < _numChores; ++i) {
 		Chore *c = _chores[i];
 
-		state->writeLESint32(c->_hasPlayed);
-		state->writeLESint32(c->_playing);
-		state->writeLESint32(c->_looping);
+		state->writeBool(c->_hasPlayed);
+		state->writeBool(c->_playing);
+		state->writeBool(c->_looping);
 		state->writeLESint32(c->_currTime);
 	}
 
@@ -637,7 +515,7 @@ void Costume::saveState(SaveGame *state) const {
 		Component *c = _components[i];
 
 		if (c) {
-			state->writeLESint32(c->_visible);
+			state->writeBool(c->_visible);
 			state->writeVector3d(c->_matrix.getPosition());
 			c->saveState(state);
 		}
@@ -648,13 +526,12 @@ void Costume::saveState(SaveGame *state) const {
 		state->writeLESint32((*i)->getId());
 	}
 
-	// FIXME: Decomment this!!
-// 	state.writeFloat(_lookAtRate);
+	state->writeFloat(_lookAtRate);
 	_head->saveState(state);
 }
 
 bool Costume::restoreState(SaveGame *state) {
-	if (state->readLEUint32()) {
+	if (state->readBool()) {
 		Common::String str = state->readString();
 		setColormap(str);
 	}
@@ -662,16 +539,16 @@ bool Costume::restoreState(SaveGame *state) {
 	for (int i = 0; i < _numChores; ++i) {
 		Chore *c = _chores[i];
 
-		c->_hasPlayed = state->readLESint32();
-		c->_playing = state->readLESint32();
-		c->_looping = state->readLESint32();
+		c->_hasPlayed = state->readBool();
+		c->_playing = state->readBool();
+		c->_looping = state->readBool();
 		c->_currTime = state->readLESint32();
 	}
 	for (int i = 0; i < _numComponents; ++i) {
 		Component *c = _components[i];
 
 		if (c) {
-			c->_visible = state->readLESint32();
+			c->_visible = state->readBool();
 			c->_matrix.setPosition(state->readVector3d());
 			c->restoreState(state);
 		}
@@ -683,8 +560,7 @@ bool Costume::restoreState(SaveGame *state) {
 		_playingChores.push_back(_chores[id]);
 	}
 
-	// FIXME: Decomment this!!
-// 	_lookAtRate = state->readFloat();
+	_lookAtRate = state->readFloat();
 	_head->restoreState(state);
 	_head->loadJoints(getModelNodes());
 

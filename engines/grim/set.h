@@ -38,11 +38,13 @@ class SaveGame;
 class CMap;
 class Light;
 
-class Set : public PoolObject<Set, MKTAG('S', 'E', 'T', ' ')> {
+class Set : public PoolObject<Set> {
 public:
 	Set(const Common::String &name, Common::SeekableReadStream *data);
 	Set();
 	~Set();
+
+	static int32 getStaticTag() { return MKTAG('S', 'E', 'T', ' '); }
 
 	void loadText(TextSplitter &ts);
 	void loadBinary(Common::SeekableReadStream *data);
@@ -59,10 +61,10 @@ public:
 		_currSetup->setupCamera();
 	}
 
-	void setupLights();
+	void setupLights(const Math::Vector3d &pos);
 
-	void setSoundPosition(const char *soundName, Math::Vector3d pos);
-	void setSoundPosition(const char *soundName, Math::Vector3d pos, int minVol, int maxVol);
+	void setSoundPosition(const char *soundName, const Math::Vector3d &pos);
+	void setSoundPosition(const char *soundName, const Math::Vector3d &pos, int minVol, int maxVol);
 	void setSoundParameters(int minVolume, int maxVolume);
 	void getSoundParameters(int *minVolume, int *maxVolume);
 
@@ -70,9 +72,7 @@ public:
 
 	void setLightEnableState(bool state) {
 		_enableLights = state;
-		_lightsConfigured = false;
 	}
-	void setLightsDirty();
 	void setLightIntensity(const char *light, float intensity);
 	void setLightIntensity(int light, float intensity);
 	void setLightPosition(const char *light, const Math::Vector3d &pos);
@@ -88,6 +88,8 @@ public:
 	int getSectorCount() { return _numSectors; }
 
 	Sector *getSectorBase(int id);
+	Sector *getSector(const Common::String &name);
+	Sector *getSector(const Common::String &name, const Math::Vector3d &pos);
 
 	Sector *findPointSector(const Math::Vector3d &p, Sector::SectorType type);
 	void findClosestSector(const Math::Vector3d &p, Sector **sect, Math::Vector3d *closestPt);
@@ -135,8 +137,8 @@ private:
 	bool _enableLights;
 	Sector **_sectors;
 	Light *_lights;
+	Common::List<Light *> _lightsList;
 	Setup *_setups;
-	bool _lightsConfigured;
 
 	Setup *_currSetup;
 	typedef Common::List<ObjectState::Ptr> StateList;

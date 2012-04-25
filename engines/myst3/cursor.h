@@ -35,15 +35,22 @@ public:
 	virtual ~Cursor();
 
 	void changeCursor(uint32 index);
+	bool isPositionLocked() { return _lockedAtCenter; }
 	void lockPosition(bool lock);
 
 	Common::Point getPosition() { return _position; }
 	void updatePosition(Common::Point &mouse);
+
+	void getDirection(float &pitch, float &heading);
+
 	void draw();
+	void setVisible(bool show);
+	bool isVisible();
 private:
 	Myst3Engine *_vm;
 
 	uint32 _currentCursorID;
+	int32 _hideLevel;
 
 	/** Position of the cursor */
 	Common::Point _position;

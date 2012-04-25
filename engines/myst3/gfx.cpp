@@ -34,6 +34,8 @@
 #include "graphics/colormasks.h"
 #include "graphics/surface.h"
 
+#include "math/vector2d.h"
+
 #ifdef SDL_BACKEND
 #include <SDL_opengl.h>
 #else
@@ -52,6 +54,7 @@ public:
 
 	GLuint id;
 	GLuint internalFormat;
+	GLuint sourceFormat;
 	uint32 internalWidth;
 	uint32 internalHeight;
 };
@@ -77,16 +80,21 @@ OpenGLTexture::OpenGLTexture(const Graphics::Surface *surface) {
 	internalHeight = upperPowerOfTwo(height);
 	internalWidth = upperPowerOfTwo(width);
 
-	if (format.bytesPerPixel == 4)
+	if (format.bytesPerPixel == 4) {
 		internalFormat = GL_RGBA;
-	else if (format.bytesPerPixel == 3)
+		sourceFormat = GL_UNSIGNED_BYTE;
+	} else if (format.bytesPerPixel == 3) {
 		internalFormat = GL_RGB;
-	else
+		sourceFormat = GL_UNSIGNED_BYTE;
+	} else if (format.bytesPerPixel == 2) {
+		internalFormat = GL_RGB;
+		sourceFormat = GL_UNSIGNED_SHORT_5_6_5;
+	} else
 		error("Unknown pixel format");
 
 	glGenTextures(1, &id);
 	glBindTexture(GL_TEXTURE_2D, id);
-	glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, internalWidth, internalHeight, 0, internalFormat, GL_UNSIGNED_BYTE, 0);
+	glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, internalWidth, internalHeight, 0, internalFormat, sourceFormat, 0);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
@@ -99,7 +107,7 @@ OpenGLTexture::~OpenGLTexture() {
 
 void OpenGLTexture::update(const Graphics::Surface *surface) {
 	glBindTexture(GL_TEXTURE_2D, id);
-	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, surface->w, surface->h, internalFormat, GL_UNSIGNED_BYTE, surface->pixels);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, surface->w, surface->h, internalFormat, sourceFormat, surface->pixels);
 }
 
 Renderer::Renderer(OSystem *system) :
@@ -143,6 +151,7 @@ void Renderer::clear() {
 }
 
 void Renderer::setupCameraOrtho2D() {
+	glViewport(0, 0, kOriginalWidth, kOriginalHeight);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	gluOrtho2D(0.0, kOriginalWidth, kOriginalHeight, 0.0);
@@ -151,16 +160,28 @@ void Renderer::setupCameraOrtho2D() {
 	glLoadIdentity();
 }
 
-void Renderer::setupCameraPerspective(float pitch, float heading) {
+void Renderer::setupCameraPerspective(float pitch, float heading, float fov) {
+	// TODO: Find a correct and exact formula for the FOV
+	GLfloat glFOV = 0.63 * fov; // Approximative and experimental formula
+	if (fov > 79.0 && fov < 81.0)
+		glFOV = 50.5; // Somewhat good value for fov == 80
+	else if (fov > 59.0 && fov < 61.0)
+		glFOV = 36.0; // Somewhat good value for fov == 60
+
+	glViewport(0, kBottomBorderHeight, kOriginalWidth, kFrameHeight);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	gluPerspective(65.0, (GLfloat)kOriginalWidth /(GLfloat)kOriginalHeight, 0.1, 100.0);
+	gluPerspective(glFOV, (GLfloat)kOriginalWidth / (GLfloat)kFrameHeight, 1.0, 10000.0);
 
 	// Rotate the model to simulate the rotation of the camera
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 	glRotatef(pitch, -1.0f, 0.0f, 0.0f);
 	glRotatef(heading - 180.0f, 0.0f, 1.0f, 0.0f);
+
+	glGetDoublev(GL_MODELVIEW_MATRIX, _cubeModelViewMatrix);
+	glGetDoublev(GL_PROJECTION_MATRIX, _cubeProjectionMatrix);
+	glGetIntegerv(GL_VIEWPORT, (GLint *)_cubeViewport);
 }
 
 void Renderer::drawRect2D(const Common::Rect &rect, uint32 color) {
@@ -297,7 +318,7 @@ void Renderer::drawCube(Texture **textures) {
 	OpenGLTexture *texture0 = static_cast<OpenGLTexture *>(textures[0]);
 
 	// Size of the cube
-	float t = 1.0f;
+	float t = 256.0f;
 
 	// Used fragment of the textures
 	float s = texture0->width / (float) texture0->internalWidth;
@@ -393,6 +414,26 @@ Graphics::Surface *Renderer::getScreenshot() {
 	glReadPixels(0, 0, kOriginalWidth, kOriginalHeight, GL_RGB, GL_UNSIGNED_BYTE, s->pixels);
 
 	return s;
+}
+
+void Renderer::screenPosToDirection(const Common::Point screen, float &pitch, float &heading) {
+	double x, y, z;
+
+	// Screen coords to 3D coords
+	gluUnProject(screen.x, kOriginalHeight - screen.y, 0.9, _cubeModelViewMatrix, _cubeProjectionMatrix, (GLint *)_cubeViewport, &x, &y, &z);
+
+	// 3D coords to polar coords
+	Math::Vector3d v = Math::Vector3d(x, y, z);
+	v.normalize();
+
+	Math::Vector2d horizontalProjection = Math::Vector2d(v.x(), v.z());
+	horizontalProjection.normalize();
+
+	pitch = 90 - Math::Angle::arcCosine(v.y()).getDegrees();
+	heading = Math::Angle::arcCosine(horizontalProjection.getY()).getDegrees();
+
+	if (horizontalProjection.getX() > 0.0)
+		heading = 360 - heading;
 }
 
 } // end of namespace Myst3

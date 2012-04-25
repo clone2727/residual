@@ -12,9 +12,10 @@ all: $(EXECUTABLE) plugins
 ######################################################################
 # Module settings
 ######################################################################
+#ResidualVM: added 'math':
 
 PLUGINS :=
-MODULES := devtools base $(MODULES)
+MODULES := test devtools base $(MODULES)
 
 -include $(srcdir)/engines/engines.mk
 
@@ -107,7 +108,7 @@ ifdef CXX_UPDATE_DEP_FLAG
 
 %.o: %.m
 	$(QUIET)$(MKDIR) $(*D)/$(DEPDIR)
-	$(QUIET_CXX)$(CXX) $(CXX_UPDATE_DEP_FLAG) $(OBJCFLAGS) -c $(<) -o $*.o
+	$(QUIET_CXX)$(CXX) $(CXX_UPDATE_DEP_FLAG) $(CPPFLAGS) $(OBJCFLAGS) -c $(<) -o $*.o
 
 # Build rule for assembler files with preprocessing
 %.o: %.S
@@ -154,7 +155,8 @@ endif
 # Get the current version information
 ######################################################################
 
-VERSION = $(shell grep RESIDUALVM_VERSION "${srcdir}/base/internal_version.h" | cut -d\" -f2)
+# AmigaOS4's grep has a problem with "./" in pathnames, so use cat piped into grep.
+VERSION = $(shell cat "${srcdir}/base/internal_version.h" | grep SCUMMVM_VERSION | cut -d\" -f2)
 VER_MAJOR = $(shell echo $(VERSION) | cut -d. -f 1)
 VER_MINOR = $(shell echo $(VERSION) | cut -d. -f 2)
 VER_PATCH = $(shell echo $(VERSION) | cut -d. -f 3 | cut -c1)
@@ -181,7 +183,7 @@ endif
 # Define the Subversion revision if available, either autodetected or
 # specified by the user, but only for base/version.cpp.
 ifneq ($(origin VER_REV), undefined)
-base/version.o: CXXFLAGS:=$(CXXFLAGS) -DRESIDUALVM_REVISION=\"$(VER_REV)\"
+base/version.o: CXXFLAGS:=$(CXXFLAGS) -DSCUMMVM_REVISION=\"$(VER_REV)\"
 endif
 
 ######################################################################
@@ -210,7 +212,7 @@ $(VERFILE): $(srcdir)/base/internal_version.h
 ifneq ($(origin VER_REV), undefined)
 	@# Use the current SVN revision as a default for the snapshot sources
 	@svn cat $(SVNROOT)/base/internal_version.h | sed -e \
-		"s/^#define RESIDUALVM_REVISION$$/#define RESIDUALVM_REVISION \"$(VER_REV)\"/g" \
+		"s/^#define SCUMMVM_REVISION$$/#define SCUMMVM_REVISION \"$(VER_REV)\"/g" \
 		> $(VERFILE)
 endif
 
@@ -231,7 +233,7 @@ dist-src: \
 	@#DEB-src?
 
 # Common files
-DIST_FILES_DOCS:=$(addprefix $(srcdir)/,AUTHORS COPYING COPYING.LGPL COPYRIGHT NEWS README)
+DIST_FILES_DOCS:=$(addprefix $(srcdir)/,AUTHORS COPYING COPYING.BSD COPYING.LGPL COPYING.FREEFONT COPYRIGHT NEWS README)
 
 # Themes files
 DIST_FILES_THEMES=modern.zip
@@ -241,7 +243,10 @@ endif
 DIST_FILES_THEMES:=$(addprefix $(srcdir)/gui/themes/,$(DIST_FILES_THEMES))
 
 # Engine data files
-DIST_FILES_ENGINEDATA=residualvm-grim-patch.lab
+DIST_FILES_ENGINEDATA=
+ifdef ENABLE_GRIM
+DIST_FILES_ENGINEDATA+=residualvm-grim-patch.lab
+endif
 DIST_FILES_ENGINEDATA:=$(addprefix $(srcdir)/dists/engine-data/,$(DIST_FILES_ENGINEDATA))
 
 

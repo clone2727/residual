@@ -195,7 +195,7 @@ static Common::Error runGame(const EnginePlugin *plugin, OSystem &system, const 
 	}
 
 	// On creation the engine should have set up all debug levels so we can use
-	// the command line arugments here
+	// the command line arguments here
 	Common::StringTokenizer tokenizer(edebuglevels, " ,");
 	while (!tokenizer.empty()) {
 		Common::String token = tokenizer.nextToken();
@@ -205,6 +205,12 @@ static Common::Error runGame(const EnginePlugin *plugin, OSystem &system, const 
 
 	// Initialize any game-specific keymaps
 	engine->initKeymap();
+
+	// Set default values for all of the custom engine options
+	const ExtraGuiOptions engineOptions = (*plugin)->getExtraGuiOptions(Common::String());
+	for (uint i = 0; i < engineOptions.size(); i++) {
+		ConfMan.registerDefault(engineOptions[i].configOption, engineOptions[i].defaultState);
+	}
 
 	// Inform backend that the engine is about to be run
 	system.engineInit();
@@ -232,7 +238,19 @@ static Common::Error runGame(const EnginePlugin *plugin, OSystem &system, const 
 }
 
 static void setupGraphics(OSystem &system) {
-	system.launcherInitSize(640, 400);
+
+	system.beginGFXTransaction();
+		// Set the user specified graphics mode (if any).
+		system.setGraphicsMode(ConfMan.get("gfx_mode").c_str());
+
+		system.initSize(320, 200);
+		system.launcherInitSize(640, 400);//ResidualVM specific
+
+		if (ConfMan.hasKey("aspect_ratio"))
+			system.setFeatureState(OSystem::kFeatureAspectRatioCorrection, ConfMan.getBool("aspect_ratio"));
+		if (ConfMan.hasKey("fullscreen"))
+			system.setFeatureState(OSystem::kFeatureFullscreenMode, ConfMan.getBool("fullscreen"));
+	system.endGFXTransaction();
 
 	// When starting up launcher for the first time, the user might have specified
 	// a --gui-theme option, to allow that option to be working, we need to initialize
@@ -241,54 +259,64 @@ static void setupGraphics(OSystem &system) {
 	GUI::GuiManager::instance();
 
 	// Set initial window caption
-	system.setWindowCaption(gResidualVMFullVersion);
+	system.setWindowCaption(gScummVMFullVersion);
 
 	// Clear the main screen
-	//system.fillScreen(0);
+	system.fillScreen(0);
 }
 
 static void setupKeymapper(OSystem &system) {
-
 #ifdef ENABLE_KEYMAPPER
 	using namespace Common;
 
 	Keymapper *mapper = system.getEventManager()->getKeymapper();
-	Keymap *globalMap = new Keymap("global");
-	Action *act;
-	HardwareKeySet *keySet;
 
-	keySet = system.getHardwareKeySet();
+	HardwareInputSet *inputSet = system.getHardwareInputSet();
 
 	// Query backend for hardware keys and register them
-	mapper->registerHardwareKeySet(keySet);
+	mapper->registerHardwareInputSet(inputSet);
 
 	// Now create the global keymap
-	act = new Action(globalMap, "MENU", _("Menu"), kGenericActionType, kSelectKeyType);
-	act->addKeyEvent(KeyState(KEYCODE_F5, ASCII_F5, 0));
+	Keymap *primaryGlobalKeymap = new Keymap(kGlobalKeymapName);
+	Action *act;
+	act = new Action(primaryGlobalKeymap, "MENU", _("Menu"));
+	act->addEvent(EVENT_MAINMENU);
 
-	act = new Action(globalMap, "SKCT", _("Skip"), kGenericActionType, kActionKeyType);
+	act = new Action(primaryGlobalKeymap, "SKCT", _("Skip"));
 	act->addKeyEvent(KeyState(KEYCODE_ESCAPE, ASCII_ESCAPE, 0));
 
-	act = new Action(globalMap, "PAUS", _("Pause"), kGenericActionType, kStartKeyType);
+	act = new Action(primaryGlobalKeymap, "PAUS", _("Pause"));
 	act->addKeyEvent(KeyState(KEYCODE_SPACE, ' ', 0));
 
-	act = new Action(globalMap, "SKLI", _("Skip line"), kGenericActionType, kActionKeyType);
+	act = new Action(primaryGlobalKeymap, "SKLI", _("Skip line"));
 	act->addKeyEvent(KeyState(KEYCODE_PERIOD, '.', 0));
 
-	act = new Action(globalMap, "VIRT", _("Display keyboard"), kVirtualKeyboardActionType);
-	act->addKeyEvent(KeyState(KEYCODE_F7, ASCII_F7, 0));
+#ifdef ENABLE_VKEYBD
+	act = new Action(primaryGlobalKeymap, "VIRT", _("Display keyboard"));
+	act->addEvent(EVENT_VIRTUAL_KEYBOARD);
+#endif
 
-	act = new Action(globalMap, "REMP", _("Remap keys"), kKeyRemapActionType);
-	act->addKeyEvent(KeyState(KEYCODE_F8, ASCII_F8, 0));
+	act = new Action(primaryGlobalKeymap, "REMP", _("Remap keys"));
+	act->addEvent(EVENT_KEYMAPPER_REMAP);
 
-	mapper->addGlobalKeymap(globalMap);
+	act = new Action(primaryGlobalKeymap, "FULS", _("Toggle FullScreen"));
+	act->addKeyEvent(KeyState(KEYCODE_RETURN, ASCII_RETURN, KBD_ALT));
 
-	mapper->pushKeymap("global", true);
+	mapper->addGlobalKeymap(primaryGlobalKeymap);
+	mapper->pushKeymap(kGlobalKeymapName, true);
+
+	// Get the platform-specific global keymap (if it exists)
+	Keymap *platformGlobalKeymap = system.getGlobalKeymap();
+	if (platformGlobalKeymap) {
+		String platformGlobalKeymapName = platformGlobalKeymap->getName();
+		mapper->addGlobalKeymap(platformGlobalKeymap);
+		mapper->pushKeymap(platformGlobalKeymapName, true);
+	}
 #endif
 
 }
 
-extern "C" int residualvm_main(int argc, const char * const argv[]) {
+extern "C" int scummvm_main(int argc, const char * const argv[]) {
 	Common::String specialDebug;
 	Common::String command;
 
@@ -312,7 +340,7 @@ extern "C" int residualvm_main(int argc, const char * const argv[]) {
 	}
 
 	// Update the config file
-	ConfMan.set("versioninfo", gResidualVMVersion, Common::ConfigManager::kApplicationDomain);
+	ConfMan.set("versioninfo", gScummVMVersion, Common::ConfigManager::kApplicationDomain);
 
 	// Load and setup the debuglevel and the debug flags. We do this at the
 	// soonest possible moment to ensure debug output starts early on, if
@@ -356,6 +384,25 @@ extern "C" int residualvm_main(int argc, const char * const argv[]) {
 	// Init the backend. Must take place after all config data (including
 	// the command line params) was read.
 	system.initBackend();
+
+	// If we received an invalid graphics mode parameter via command line
+	// we check this here. We can't do it until after the backend is inited,
+	// or there won't be a graphics manager to ask for the supported modes.
+
+	if (settings.contains("gfx-mode")) {
+		const OSystem::GraphicsMode *gm = g_system->getSupportedGraphicsModes();
+		Common::String option = settings["gfx-mode"];
+		bool isValid = false;
+
+		while (gm->name && !isValid) {
+			isValid = !scumm_stricmp(gm->name, option.c_str());
+			gm++;
+		}
+		if (!isValid) {
+			warning("Unrecognized graphics mode '%s'. Switching to default mode", option.c_str());
+			settings["gfx-mode"] = "default";
+		}
+	}
 
 	setupGraphics(system);
 

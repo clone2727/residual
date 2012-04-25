@@ -24,6 +24,7 @@
 #include "common/system.h"
 
 #include "graphics/surface.h"
+#include "graphics/colormasks.h"
 
 #include "engines/grim/actor.h"
 #include "engines/grim/colormap.h"
@@ -31,14 +32,94 @@
 #include "engines/grim/font.h"
 #include "engines/grim/gfx_tinygl.h"
 #include "engines/grim/grim.h"
-#include "engines/grim/lipsync.h"
 #include "engines/grim/bitmap.h"
 #include "engines/grim/primitives.h"
-#include "engines/grim/modelemi.h"
 #include "engines/grim/model.h"
 #include "engines/grim/set.h"
+#include "engines/grim/emi/modelemi.h"
 
 namespace Grim {
+
+/**
+ * This class is used for blitting bitmaps with transparent pixels.
+ * Instead of checking every pixel for transparency, it creates a list of 'lines'.
+ * A line is, well, a line of non trasparent pixels, and itstores a pointer to the
+ * first pixel, and the position of it, which can be used to memcpy the entire line
+ * to the destination buffer.
+ */
+class BlitImage {
+public:
+	BlitImage() {
+		_lines = NULL;
+		_last = NULL;
+	}
+	~BlitImage() {
+		Line *temp = _lines;
+		while (temp != NULL) {
+			_lines = temp->next;
+			delete temp;
+			temp = _lines;
+		}
+	}
+	void create(const Graphics::PixelBuffer &buf, uint32 transparency, int x, int y, int width, int height) {
+		Graphics::PixelBuffer srcBuf = buf;
+		// A line of pixels can not wrap more that one line of the image, since it would break
+		// blitting of bitmaps with a non-zero x position.
+		for (int l = 0; l < height; l++) {
+			int start = -1;
+
+			for (int r = 0; r < width; ++r) {
+				// We found a transparent pixel, so save a line from 'start' to the pixel before this.
+				if (srcBuf.getValueAt(r) == transparency && start >= 0) {
+					newLine(start, l, r - start, srcBuf.getRawBuffer(start));
+
+					start = -1;
+				} else if (srcBuf.getValueAt(r) != transparency && start == -1) {
+					start = r;
+				}
+			}
+			// end of the bitmap line. if start is an actual pixel save the line.
+			if (start >= 0) {
+				newLine(start, l, width - start, srcBuf.getRawBuffer(start));
+			}
+
+			srcBuf.shiftBy(width);
+		}
+	}
+
+	void newLine(int x, int y, int length, byte *pixels) {
+		if (length < 1) {
+			return;
+		}
+
+		Line *line = new Line;
+
+		line->x = x;
+		line->y = y;
+		line->length = length;
+		line->pixels = pixels;
+		line->next = NULL;
+
+		if (_last) {
+			_last->next = line;
+		}
+		if (!_lines) {
+			_lines = line;
+		}
+		_last = line;
+	}
+
+	struct Line {
+		int x;
+		int y;
+		int length;
+		byte *pixels;
+
+		Line *next;
+	};
+	Line *_lines;
+	Line *_last;
+};
 
 GfxBase *CreateGfxTinyGL() {
 	return new GfxTinyGL();
@@ -148,10 +229,10 @@ GfxTinyGL::GfxTinyGL() {
 	g_driver = this;
 	_zb = NULL;
 	_storedDisplay = NULL;
+	_alpha = 1.f;
 }
 
 GfxTinyGL::~GfxTinyGL() {
-	delete[] _storedDisplay;
 	if (_zb) {
 		TinyGL::glClose();
 		ZB_close(_zb);
@@ -159,22 +240,24 @@ GfxTinyGL::~GfxTinyGL() {
 }
 
 byte *GfxTinyGL::setupScreen(int screenW, int screenH, bool fullscreen) {
-	byte *buffer = g_system->setupScreen(screenW, screenH, fullscreen, false);
+	Graphics::PixelBuffer buf = g_system->setupScreen(screenW, screenH, fullscreen, false);
+	byte *buffer = buf.getRawBuffer();
 
 	_screenWidth = screenW;
 	_screenHeight = screenH;
-	_screenBPP = 15;
 	_isFullscreen = g_system->getFeatureState(OSystem::kFeatureFullscreenMode);
 
 	g_system->showMouse(!fullscreen);
 
 	g_system->setWindowCaption("ResidualVM: Software 3D Renderer");
 
-	_zb = TinyGL::ZB_open(screenW, screenH, ZB_MODE_5R6G5B, buffer);
+	_pixelFormat = buf.getFormat();
+	_zb = TinyGL::ZB_open(screenW, screenH, buf);
 	TinyGL::glInit(_zb);
 
-	_storedDisplay = new byte[640 * 480 * 2];
-	memset(_storedDisplay, 0, 640 * 480 * 2);
+	_screenSize = _gameWidth * _gameHeight * _pixelFormat.bytesPerPixel;
+	_storedDisplay.create(_pixelFormat, _gameWidth * _gameHeight, DisposeAfterUse::YES);
+	_storedDisplay.clear(_gameWidth * _gameHeight);
 
 	_currentShadowArray = NULL;
 
@@ -201,8 +284,20 @@ void GfxTinyGL::setupCamera(float fov, float nclip, float fclip, float roll) {
 	tglRotatef(roll, 0, 0, -1);
 }
 
-void GfxTinyGL::positionCamera(Math::Vector3d pos, Math::Vector3d interest) {
+void GfxTinyGL::positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest) {
 	Math::Vector3d up_vec(0, 0, 1);
+
+	// EMI only: transform XYZ to YXZ
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		static const float EMI_MATRIX[] = {
+			0,1,0,0,
+			1,0,0,0,
+			0,0,1,0,
+			0,0,0,1
+		};
+
+		tglMultMatrixf(EMI_MATRIX);
+	}
 
 	if (pos.x() == interest.x() && pos.y() == interest.y())
 		up_vec = Math::Vector3d(0, 1, 0);
@@ -211,20 +306,33 @@ void GfxTinyGL::positionCamera(Math::Vector3d pos, Math::Vector3d interest) {
 }
 
 void GfxTinyGL::clearScreen() {
-	memset(_zb->pbuf, 0, 640 * 480 * 2);
-	memset(_zb->zbuf, 0, 640 * 480 * 2);
-	memset(_zb->zbuf2, 0, 640 * 480 * 4);
+	_zb->pbuf.clear(_screenSize);
+	memset(_zb->zbuf, 0, _gameWidth * _gameHeight * sizeof(unsigned int));
 }
 
 void GfxTinyGL::flipBuffer() {
+	TinyGL::ZB_blitOffscreenBuffer(_zb);
+
 	g_system->updateScreen();
+}
+
+void GfxTinyGL::selectScreenBuffer() {
+	TinyGL::ZB_selectScreenBuffer(_zb);
+}
+
+void GfxTinyGL::selectCleanBuffer() {
+	TinyGL::ZB_selectOffscreenBuffer(_zb);
+}
+
+void GfxTinyGL::clearCleanBuffer() {
+	TinyGL::ZB_clearOffscreenBuffer(_zb);
 }
 
 bool GfxTinyGL::isHardwareAccelerated() {
 	return false;
 }
 
-static void tglShadowProjection(Math::Vector3d light, Math::Vector3d plane, Math::Vector3d normal, bool dontNegate) {
+static void tglShadowProjection(const Math::Vector3d &light, const Math::Vector3d &plane, const Math::Vector3d &normal, bool dontNegate) {
 	// Based on GPL shadow projection example by
 	// (c) 2002-2003 Phaetos <phaetos@gaffga.de>
 	float d, c;
@@ -318,19 +426,19 @@ void GfxTinyGL::getBoundingBoxPos(const Mesh *model, int *x1, int *y1, int *x2, 
 	}
 
 	float t = bottom;
-	bottom = 480 - top;
-	top = 480 - t;
+	bottom = _gameHeight - top;
+	top = _gameHeight - t;
 
 	if (left < 0)
 		left = 0;
-	if (right > 639)
-		right = 639;
+	if (right >= _gameWidth)
+		right = _gameWidth - 1;
 	if (top < 0)
 		top = 0;
-	if (bottom > 479)
-		bottom = 479;
+	if (bottom >= _gameHeight)
+		bottom = _gameHeight - 1;
 
-	if (top > 479 || left > 639 || bottom < 0 || right < 0) {
+	if (top >= _gameHeight || left >= _gameWidth || bottom < 0 || right < 0) {
 		*x1 = -1;
 		*y1 = -1;
 		*x2 = -1;
@@ -346,29 +454,32 @@ void GfxTinyGL::getBoundingBoxPos(const Mesh *model, int *x1, int *y1, int *x2, 
 	uint16 *dst = (uint16 *)_zb->pbuf;
 	uint16 c = 0xffff;
 	for (int x = left; x <= right; x++) {
-		WRITE_LE_UINT16(dst + 640 * (int)top + x, c);
+		WRITE_LE_UINT16(dst + _gameWidth * (int)top + x, c);
 	}
 	for (int x = left; x <= right; x++) {
-		WRITE_LE_UINT16(dst + 640 * (int)bottom + x, c);
+		WRITE_LE_UINT16(dst + _gameWidth * (int)bottom + x, c);
 	}
 	for (int y = top; y <= bottom; y++) {
-		WRITE_LE_UINT16(dst + 640 * y + (int)left, c);
+		WRITE_LE_UINT16(dst + _gameWidth * y + (int)left, c);
 	}
 	for (int y = top; y <= bottom; y++) {
-		WRITE_LE_UINT16(dst + 640 * y + (int)right, c);
+		WRITE_LE_UINT16(dst + _gameWidth * y + (int)right, c);
 	}*/
 }
 
-void GfxTinyGL::startActorDraw(Math::Vector3d pos, float scale, const Math::Angle &yaw,
-							   const Math::Angle &pitch, const Math::Angle &roll) {
+void GfxTinyGL::startActorDraw(const Math::Vector3d &pos, float scale, const Math::Angle &yaw,
+							   const Math::Angle &pitch, const Math::Angle &roll, const bool inOverworld,
+								 const float alpha) {
 	tglEnable(TGL_TEXTURE_2D);
+	tglMatrixMode(TGL_PROJECTION);
+	tglPushMatrix();
 	tglMatrixMode(TGL_MODELVIEW);
 	tglPushMatrix();
 	if (_currentShadowArray) {
 		// TODO find out why shadowMask at device in woods is null
 		if (!_currentShadowArray->shadowMask) {
-			_currentShadowArray->shadowMask = new byte[_screenWidth * _screenHeight];
-			_currentShadowArray->shadowMaskSize = _screenWidth * _screenHeight;
+			_currentShadowArray->shadowMask = new byte[_gameWidth * _gameHeight];
+			_currentShadowArray->shadowMaskSize = _gameWidth * _gameHeight;
 		}
 		assert(_currentShadowArray->shadowMask);
 		//tglSetShadowColor(255, 255, 255);
@@ -379,17 +490,52 @@ void GfxTinyGL::startActorDraw(Math::Vector3d pos, float scale, const Math::Angl
 		tglShadowProjection(_currentShadowArray->pos, shadowSector->getVertices()[0], shadowSector->getNormal(), _currentShadowArray->dontNegate);
 	}
 
-	tglTranslatef(pos.x(), pos.y(), pos.z());
-	tglScalef(scale, scale, scale);
-	tglRotatef(yaw.getDegrees(), 0, 0, 1);
-	tglRotatef(pitch.getDegrees(), 1, 0, 0);
-	tglRotatef(roll.getDegrees(), 0, 1, 0);
+	// FIXME: TinyGL doesn't seem to support translucency.
+	if (alpha < 1.f) {
+		_alpha = alpha;
+//    tglEnable(TGL_BLEND);
+//    tglBlendFunc(TGL_SRC_ALPHA, TGL_ONE_MINUS_SRC_ALPHA);
+	}
+
+	if (inOverworld) {
+		tglMatrixMode(TGL_PROJECTION);
+		tglLoadIdentity();
+		float right = 1;
+		float top = right * 0.75;
+		tglFrustum(-right, right, -top, top, 1, 3276.8f);
+		tglMatrixMode(TGL_MODELVIEW);
+		tglLoadIdentity();
+		tglScalef(1.0, 1.0, -1.0);
+		tglTranslatef(pos.x(), pos.y(), pos.z());
+	} else {
+		tglTranslatef(pos.x(), pos.y(), pos.z());
+		tglScalef(scale, scale, scale);
+		// EMI uses Y axis as down-up, so we need to rotate differently.
+		if (g_grim->getGameType() == GType_MONKEY4) {
+			tglRotatef(yaw.getDegrees(), 0, -1, 0);
+			tglRotatef(pitch.getDegrees(), 1, 0, 0);
+			tglRotatef(roll.getDegrees(), 0, 0, 1);
+		} else {
+			tglRotatef(yaw.getDegrees(), 0, 0, 1);
+			tglRotatef(pitch.getDegrees(), 1, 0, 0);
+			tglRotatef(roll.getDegrees(), 0, 1, 0);
+		}
+	}
 }
 
 void GfxTinyGL::finishActorDraw() {
 	tglMatrixMode(TGL_MODELVIEW);
 	tglPopMatrix();
+	tglMatrixMode(TGL_PROJECTION);
+	tglPopMatrix();
+	tglMatrixMode(TGL_MODELVIEW);
 	tglDisable(TGL_TEXTURE_2D);
+
+	// FIXME: TinyGL doesn't seem to support translucency.
+	if (_alpha < 1.f) {
+//    tglDisable(TGL_BLEND);
+		_alpha = 1.f;
+	}
 
 	if (_currentShadowArray) {
 		tglSetShadowMaskBuf(NULL);
@@ -397,16 +543,16 @@ void GfxTinyGL::finishActorDraw() {
 		uint16 *dst = (uint16 *)_zb->pbuf;
 		uint16 c = 0xffff;
 		for (int x = g_winX1; x <= g_winX2; x++) {
-			WRITE_LE_UINT16(dst + 640 * g_winY1 + x, c);
+			WRITE_LE_UINT16(dst + _gameWidth * g_winY1 + x, c);
 		}
 		for (int x = g_winX1; x <= g_winX2; x++) {
-			WRITE_LE_UINT16(dst + 640 * g_winY2 + x, c);
+			WRITE_LE_UINT16(dst + _gameWidth * g_winY2 + x, c);
 		}
 		for (int y = g_winY1; y <= g_winY2; y++) {
-			WRITE_LE_UINT16(dst + 640 * y + g_winX1, c);
+			WRITE_LE_UINT16(dst + _gameWidth * y + g_winX1, c);
 		}
 		for (int y = g_winY1; y <= g_winY2; y++) {
-			WRITE_LE_UINT16(dst + 640 * y + g_winX2, c);
+			WRITE_LE_UINT16(dst + _gameWidth * y + g_winX2, c);
 		}
 	}*/
 }
@@ -414,10 +560,10 @@ void GfxTinyGL::finishActorDraw() {
 void GfxTinyGL::drawShadowPlanes() {
 	tglEnable(TGL_SHADOW_MASK_MODE);
 	if (!_currentShadowArray->shadowMask) {
-		_currentShadowArray->shadowMask = new byte[_screenWidth * _screenHeight];
-		_currentShadowArray->shadowMaskSize = _screenWidth * _screenHeight;
+		_currentShadowArray->shadowMask = new byte[_gameWidth * _gameHeight];
+		_currentShadowArray->shadowMaskSize = _gameWidth * _gameHeight;
 	}
-	memset(_currentShadowArray->shadowMask, 0, _screenWidth * _screenHeight);
+	memset(_currentShadowArray->shadowMask, 0, _gameWidth * _gameHeight);
 
 	tglSetShadowMaskBuf(_currentShadowArray->shadowMask);
 	_currentShadowArray->planeList.begin();
@@ -472,31 +618,32 @@ void GfxTinyGL::drawEMIModelFace(const EMIModel* model, const EMIMeshFace* face)
 	int *indices = (int*)face->_indexes;
 	tglEnable(TGL_DEPTH_TEST);
 	tglDisable(TGL_ALPHA_TEST);
-	if (face->_hasTexture) 
+	if (face->_hasTexture)
 		tglEnable(TGL_TEXTURE_2D);
 	else
 		tglDisable(TGL_TEXTURE_2D);
 	tglBegin(TGL_TRIANGLES);
-	for (int j = 0; j < face->_faceLength * 3; j++) {
-		
+
+	for (uint j = 0; j < face->_faceLength * 3; j++) {
 		int index = indices[j];
 		if (face->_hasTexture) {
 			tglTexCoord2f(model->_texVerts[index].getX(), model->_texVerts[index].getY());
 		}
-		tglColor4ub(model->_colorMap[index].r,model->_colorMap[index].g,model->_colorMap[index].b,0);
-		
+		tglColor4ub(model->_colorMap[index].r, model->_colorMap[index].g, model->_colorMap[index].b, (int)_alpha);
+
 		Math::Vector3d normal = model->_normals[index];
-		Math::Vector3d vertex = model->_vertices[index];
-		
+		Math::Vector3d vertex = model->_drawVertices[index];
+
 		tglNormal3fv(normal.getData());
 		tglVertex3fv(vertex.getData());
 	}
+
 	tglEnd();
-	tglEnable(TGL_TEXTURE_2D);	
+	tglEnable(TGL_TEXTURE_2D);
 	tglEnable(TGL_DEPTH_TEST);
-	tglEnable(TGL_ALPHA_TEST);	
+	tglEnable(TGL_ALPHA_TEST);
 }
-	
+
 void GfxTinyGL::drawModelFace(const MeshFace *face, float *vertices, float *vertNormals, float *textureVerts) {
 	tglNormal3fv(const_cast<float *>(face->_normal.getData()));
 	tglBegin(TGL_POLYGON);
@@ -627,28 +774,38 @@ void GfxTinyGL::turnOffLight(int lightId) {
 }
 
 void GfxTinyGL::createBitmap(BitmapData *bitmap) {
-	// We want an RGB565-bitmap in TinyGL.
-	if (bitmap->_colorFormat != BM_RGB565) {
-		bitmap->convertToColorFormat(0, BM_RGB565);
+	if (bitmap->_format == 1) {
+		bitmap->convertToColorFormat(_pixelFormat);
 	}
 	if (bitmap->_format != 1) {
 		for (int pic = 0; pic < bitmap->_numImages; pic++) {
-			uint16 *bufPtr = reinterpret_cast<uint16 *>(bitmap->getImageData(pic));
+			uint32 *buf = new uint32[bitmap->_width * bitmap->_height];
+			uint16 *bufPtr = reinterpret_cast<uint16 *>(bitmap->getImageData(pic).getRawBuffer());
 			for (int i = 0; i < (bitmap->_width * bitmap->_height); i++) {
-				uint16 val = READ_LE_UINT16(bitmap->getImageData(pic) + 2 * i);
-				bufPtr[i] = ((uint32) val) * 0x10000 / 100 / (0x10000 - val);
+				uint16 val = READ_LE_UINT16(bufPtr + i);
+				// fix the value if it is incorrectly set to the bitmap transparency color
+				if (val == 0xf81f) {
+					val = 0;
+				}
+				buf[i] = ((uint32) val) * 0x10000 / 100 / (0x10000 - val) << 14;
 			}
+			delete[] bufPtr;
+			bitmap->_data[pic] = Graphics::PixelBuffer(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24), (byte*)buf);
+		}
+	} else {
+		BlitImage *imgs = new BlitImage[bitmap->_numImages];
+		bitmap->_texIds = (void *)imgs;
+
+		for (int i = 0; i < bitmap->_numImages; ++i) {
+			imgs[i].create(bitmap->getImageData(i), 0xf81f, bitmap->_x, bitmap->_y, bitmap->_width, bitmap->_height);
 		}
 	}
 }
 
-void TinyGLBlit(byte *dst, byte *src, int x, int y, int width, int height, bool trans) {
-	int srcPitch = width * 2;
-	int dstPitch = 640 * 2;
+void GfxTinyGL::blit(const Graphics::PixelFormat &format, BlitImage *image, byte *dst, byte *src, int x, int y, int width, int height, bool trans) {
 	int srcX, srcY;
-	int l, r;
 
-	if (x > 639 || y > 479)
+	if (x >= _gameWidth || y >= _gameHeight)
 		return;
 
 	if (x < 0) {
@@ -664,52 +821,71 @@ void TinyGLBlit(byte *dst, byte *src, int x, int y, int width, int height, bool 
 		srcY = 0;
 	}
 
-	if (x + width > 640)
-		width -= (x + width) - 640;
+	if (x + width > _gameWidth)
+		width -= (x + width) - _gameWidth;
 
-	if (y + height > 480)
-		height -= (y + height) - 480;
+	if (y + height > _gameHeight)
+		height -= (y + height) - _gameHeight;
 
-	dst += (x + (y * 640)) * 2;
-	src += (srcX + (srcY * width)) * 2;
+	dst += (x + (y * _gameWidth)) * format.bytesPerPixel;
+	src += (srcX + (srcY * width)) * format.bytesPerPixel;
 
-	int copyWidth = width * 2;
+	Graphics::PixelBuffer srcBuf(format, src);
+	Graphics::PixelBuffer dstBuf(format, dst);
 
 	if (!trans) {
-		for (l = 0; l < height; l++) {
-			memcpy(dst, src, copyWidth);
-			dst += dstPitch;
-			src += srcPitch;
+		for (int l = 0; l < height; l++) {
+			dstBuf.copyBuffer(0, width, srcBuf);
+			dstBuf.shiftBy(_gameWidth);
+			srcBuf.shiftBy(width);
 		}
 	} else {
-		for (l = 0; l < height; l++) {
-			for (r = 0; r < copyWidth; r += 2) {
-				uint16 pixel = READ_UINT16(src + r);
-				if (pixel != 0xf81f)
-					WRITE_UINT16(dst + r, pixel);
+		if (image) {
+			BlitImage::Line *l = image->_lines;
+			while (l) {
+				memcpy(dstBuf.getRawBuffer(l->y * _gameWidth + l->x), l->pixels, l->length * format.bytesPerPixel);
+				l = l->next;
 			}
-			dst += dstPitch;
-			src += srcPitch;
+		} else {
+			for (int l = 0; l < height; l++) {
+				for (int r = 0; r < width; ++r) {
+					if (srcBuf.getValueAt(r) != 0xf81f) {
+						dstBuf.setPixelAt(r, srcBuf);
+					}
+				}
+				dstBuf.shiftBy(_gameWidth);
+				srcBuf.shiftBy(width);
+			}
 		}
 	}
 }
 
-void GfxTinyGL::drawBitmap(const Bitmap *bitmap) {
+void GfxTinyGL::drawBitmap(const Bitmap *bitmap, int x, int y) {
 	int format = bitmap->getFormat();
 	if ((format == 1 && !_renderBitmaps) || (format == 5 && !_renderZBitmaps)) {
 		return;
 	}
 
 	assert(bitmap->getActiveImage() > 0);
+	const int num = bitmap->getActiveImage() - 1;
+
+	BlitImage *b = (BlitImage *)bitmap->getTexIds();
+
 	if (bitmap->getFormat() == 1)
-		TinyGLBlit((byte *)_zb->pbuf, (byte *)bitmap->getData(bitmap->getActiveImage() - 1),
-			bitmap->getX(), bitmap->getY(), bitmap->getWidth(), bitmap->getHeight(), true);
+		blit(bitmap->getPixelFormat(num), &b[num], (byte *)_zb->pbuf.getRawBuffer(), (byte *)bitmap->getData(num).getRawBuffer(),
+			x, y, bitmap->getWidth(), bitmap->getHeight(), true);
 	else
-		TinyGLBlit((byte *)_zb->zbuf, (byte *)bitmap->getData(bitmap->getActiveImage() - 1),
-			bitmap->getX(), bitmap->getY(), bitmap->getWidth(), bitmap->getHeight(), false);
+		blit(bitmap->getPixelFormat(num), NULL, (byte *)_zb->zbuf, (byte *)bitmap->getData(num).getRawBuffer(),
+			x, y, bitmap->getWidth(), bitmap->getHeight(), false);
 }
 
-void GfxTinyGL::destroyBitmap(BitmapData *) { }
+void GfxTinyGL::destroyBitmap(BitmapData *bitmap) {
+	for (int pic = 0; pic < bitmap->_numImages; pic++) {
+		if (bitmap->_data)
+			bitmap->_data[pic].free();
+	}
+	delete[] (BlitImage*)bitmap->_texIds;
+}
 
 void GfxTinyGL::createFont(Font *font) {
 }
@@ -726,7 +902,7 @@ void GfxTinyGL::createTextObject(TextObject *text) {
 	int numLines = text->getNumLines();
 	const Common::String *lines = text->getLines();
 	const Font *font = text->getFont();
-	const Color *fgColor = text->getFGColor();
+	const Color &fgColor = text->getFGColor();
 	TextObjectData *userData = new TextObjectData[numLines];
 	text->setUserData(userData);
 	for (int j = 0; j < numLines; j++) {
@@ -760,34 +936,34 @@ void GfxTinyGL::createTextObject(TextObject *text) {
 			startOffset += charWidth;
 		}
 
-		uint16 *texData = new uint16[width * height];
-		uint16 *texDataPtr = texData;
+		Graphics::PixelBuffer buf(_pixelFormat, width * height, DisposeAfterUse::NO);
+
 		uint8 *bitmapData = _textBitmap;
-		uint8 r = fgColor->getRed();
-		uint8 g = fgColor->getGreen();
-		uint8 b = fgColor->getBlue();
-		uint16 color = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+		uint8 r = fgColor.getRed();
+		uint8 g = fgColor.getGreen();
+		uint8 b = fgColor.getBlue();
+		uint32 color = _zb->cmode.RGBToColor(r, g, b);
+
 		if (color == 0xf81f)
 			color = 0xf81e;
 
-		for (int i = 0; i < width * height; i++, texDataPtr++, bitmapData++) {
+		int txData = 0;
+		for (int i = 0; i < width * height; i++, txData++, bitmapData++) {
 			byte pixel = *bitmapData;
 			if (pixel == 0x00) {
-				WRITE_UINT16(texDataPtr, 0xf81f);
+				buf.setPixelAt(txData, 0xf81f);
 			} else if (pixel == 0x80) {
-				*texDataPtr = 0;
+				buf.setPixelAt(txData, 0);
 			} else if (pixel == 0xFF) {
-				WRITE_UINT16(texDataPtr, color);
+				buf.setPixelAt(txData, color);
 			}
 		}
 
-
 		userData[j].width = width;
 		userData[j].height = height;
-		userData[j].data = (byte *)texData;
+		userData[j].data = buf.getRawBuffer();
 		userData[j].x = text->getLineX(j);
 		userData[j].y = text->getLineY(j);
-
 
 		delete[] _textBitmap;
 	}
@@ -798,10 +974,9 @@ void GfxTinyGL::drawTextObject(TextObject *text) {
 	if (userData) {
 		int numLines = text->getNumLines();
 		for (int i = 0; i < numLines; ++i) {
-			TinyGLBlit((byte *)_zb->pbuf, userData[i].data, userData[i].x, userData[i].y, userData[i].width, userData[i].height, true);
+			blit(_pixelFormat, NULL, (byte *)_zb->pbuf.getRawBuffer(), userData[i].data, userData[i].x, userData[i].y, userData[i].width, userData[i].height, true);
 		}
 	}
-
 }
 
 void GfxTinyGL::destroyTextObject(TextObject *text) {
@@ -820,11 +995,11 @@ void GfxTinyGL::createMaterial(Texture *material, const char *data, const CMap *
 	tglGenTextures(1, (TGLuint *)material->_texture);
 	char *texdata = new char[material->_width * material->_height * 4];
 	char *texdatapos = texdata;
-	
+
 	if (cmap != NULL) { // EMI doesn't have colour-maps
 		for (int y = 0; y < material->_height; y++) {
 			for (int x = 0; x < material->_width; x++) {
-				uint8 col = *(uint8 *)(data);
+				uint8 col = *(const uint8 *)(data);
 				if (col == 0) {
 					memset(texdatapos, 0, 4); // transparent
 					if (!material->_hasAlpha) {
@@ -841,17 +1016,17 @@ void GfxTinyGL::createMaterial(Texture *material, const char *data, const CMap *
 	} else {
 		memcpy(texdata, data, material->_width * material->_height * material->_bpp);
 	}
-	
+
 	TGLuint format = 0;
-	TGLuint internalFormat = 0;
+//	TGLuint internalFormat = 0;
 	if (material->_colorFormat == BM_RGBA) {
 		format = TGL_RGBA;
-		internalFormat = TGL_RGBA;
+//		internalFormat = TGL_RGBA;
 	} else {	// The only other colorFormat we load right now is BGR
 		format = TGL_BGR;
-		internalFormat = TGL_RGB;
+//		internalFormat = TGL_RGB;
 	}
-	
+
 	TGLuint *textures = (TGLuint *)material->_texture;
 	tglBindTexture(TGL_TEXTURE_2D, textures[0]);
 	tglTexParameteri(TGL_TEXTURE_2D, TGL_TEXTURE_WRAP_S, TGL_REPEAT);
@@ -885,14 +1060,17 @@ void GfxTinyGL::destroyMaterial(Texture *material) {
 void GfxTinyGL::prepareMovieFrame(Graphics::Surface* frame) {
 	_smushWidth = frame->w;
 	_smushHeight = frame->h;
-	_smushBitmap = (byte *)frame->pixels;
+
+	Graphics::PixelBuffer srcBuf(frame->format, (byte *)frame->pixels);
+	_smushBitmap.create(_pixelFormat, frame->w * frame->h, DisposeAfterUse::YES);
+	_smushBitmap.copyBuffer(0, frame->w * frame->h, srcBuf);
 }
 
 void GfxTinyGL::drawMovieFrame(int offsetX, int offsetY) {
-	if (_smushWidth == 640 && _smushHeight == 480) {
-		memcpy(_zb->pbuf, _smushBitmap, 640 * 480 * 2);
+	if (_smushWidth == _gameWidth && _smushHeight == _gameHeight) {
+		_zb->pbuf.copyBuffer(0, _gameWidth * _gameHeight, _smushBitmap);
 	} else {
-		TinyGLBlit((byte *)_zb->pbuf, _smushBitmap, offsetX, offsetY, _smushWidth, _smushHeight, false);
+		blit(_pixelFormat, NULL, (byte *)_zb->pbuf.getRawBuffer(), _smushBitmap.getRawBuffer(), offsetX, offsetY, _smushWidth, _smushHeight, false);
 	}
 }
 
@@ -903,21 +1081,22 @@ void GfxTinyGL::loadEmergFont() {
 }
 
 void GfxTinyGL::drawEmergString(int x, int y, const char *text, const Color &fgColor) {
-	uint16 color = ((fgColor.getRed() & 0xF8) << 8) | ((fgColor.getGreen() & 0xFC) << 3) | (fgColor.getBlue() >> 3);
+	uint32 color = _pixelFormat.RGBToColor(fgColor.getRed(), fgColor.getGreen(), fgColor.getBlue());
 
 	for (int l = 0; l < (int)strlen(text); l++) {
 		int c = text[l];
 		assert(c >= 32 && c <= 127);
 		const uint8 *ptr = Font::emerFont[c - 32];
 		for (int py = 0; py < 13; py++) {
-			if ((py + y) < 480 && (py + y) >= 0) {
+			if ((py + y) < _gameHeight && (py + y) >= 0) {
 				int line = ptr[12 - py];
 				for (int px = 0; px < 8; px++) {
-					if ((px + x) < 640 && (px + x) >= 0) {
+					if ((px + x) < _gameWidth && (px + x) >= 0) {
 						int pixel = line & 0x80;
 						line <<= 1;
-						if (pixel)
-							WRITE_UINT16(_zb->pbuf + ((py + y) * 640) + (px + x), color);
+						if (pixel) {
+							_zb->pbuf.setPixelAt(((py + y) * _gameWidth) + (px + x), color);
+						}
 					}
 				}
 			}
@@ -927,148 +1106,134 @@ void GfxTinyGL::drawEmergString(int x, int y, const char *text, const Color &fgC
 }
 
 Bitmap *GfxTinyGL::getScreenshot(int w, int h) {
-	uint16 *buffer = new uint16[w * h];
-	uint16 *src = (uint16 *)_storedDisplay;
-	assert(buffer);
+	Graphics::PixelBuffer buffer = Graphics::PixelBuffer::createBuffer<565>(w * h, DisposeAfterUse::YES);
 
-	int step = 0;
-	for (int y = 0; y <= 479; y++) {
-		for (int x = 0; x <= 639; x++) {
-			uint16 pixel = *(src + y * 640 + x);
-			uint8 r = (pixel & 0xF800) >> 8;
-			uint8 g = (pixel & 0x07E0) >> 3;
-			uint8 b = (pixel & 0x001F) << 3;
-			uint32 color = (r + g + b) / 3;
-			src[step++] = ((color & 0xF8) << 8) | ((color & 0xFC) << 3) | (color >> 3);
+	int i1 = (_gameWidth * w - 1) / _gameWidth + 1;
+	int j1 = (_gameHeight * h - 1) / _gameHeight + 1;
+
+	for (int j = 0; j < j1; j++) {
+		for (int i = 0; i < i1; i++) {
+			int x0 = i * _gameWidth / w;
+			int x1 = ((i + 1) * _gameWidth - 1) / w + 1;
+			int y0 = j * _gameHeight / h;
+			int y1 = ((j + 1) * _gameHeight - 1) / h + 1;
+			uint32 color = 0;
+			for (int y = y0; y < y1; y++) {
+				for (int x = x0; x < x1; x++) {
+					uint8 lr, lg, lb;
+					_zb->pbuf.getRGBAt(y * _gameWidth + x, lr, lg, lb);
+					color += (lr + lg + lb) / 3;
+				}
+			}
+			color /= (x1 - x0) * (y1 - y0);
+			buffer.setPixelAt(j * w + i, color, color, color);
 		}
 	}
 
-	float step_x = 640.0f / w;
-	float step_y = 480.0f / h;
-	step = 0;
-	for (float y = 0; y < 479; y += step_y) {
-		for (float x = 0; x < 639; x += step_x) {
-			uint16 pixel = *(src + (int)y * 640 + (int)x);
-			buffer[step++] = pixel;
-		}
-	}
-
-	Bitmap *screenshot = new Bitmap((char *)buffer, w, h, 16, "screenshot");
-	delete[] buffer;
+	Bitmap *screenshot = new Bitmap(buffer, w, h, "screenshot");
 	return screenshot;
 }
 
 void GfxTinyGL::storeDisplay() {
-	memcpy(_storedDisplay, _zb->pbuf, 640 * 480 * 2);
+	_storedDisplay.copyBuffer(0, _gameWidth * _gameHeight, _zb->pbuf);
 }
 
 void GfxTinyGL::copyStoredToDisplay() {
-	memcpy(_zb->pbuf, _storedDisplay, 640 * 480 * 2);
+	_zb->pbuf.copyBuffer(0, _gameWidth * _gameHeight, _storedDisplay);
 }
 
 void GfxTinyGL::dimScreen() {
-	uint16 *data = (uint16 *)_storedDisplay;
-	for (int l = 0; l < 640 * 480; l++) {
-		uint16 pixel = data[l];
-		uint8 r = (pixel & 0xF800) >> 8;
-		uint8 g = (pixel & 0x07E0) >> 3;
-		uint8 b = (pixel & 0x001F) << 3;
+	for (int l = 0; l < _gameWidth * _gameHeight; l++) {
+		uint8 r, g, b;
+		_storedDisplay.getRGBAt(l, r, g, b);
 		uint32 color = (r + g + b) / 10;
-		data[l] = ((color & 0xF8) << 8) | ((color & 0xFC) << 3) | (color >> 3);
+		_storedDisplay.setPixelAt(l, color, color, color);
 	}
 }
 
 void GfxTinyGL::dimRegion(int x, int y, int w, int h, float level) {
-	uint16 *data = (uint16 *)_zb->pbuf;
 	for (int ly = y; ly < y + h; ly++) {
 		for (int lx = x; lx < x + w; lx++) {
-			uint16 pixel = data[ly * 640 + lx];
-			uint8 r = (pixel & 0xF800) >> 8;
-			uint8 g = (pixel & 0x07E0) >> 3;
-			uint8 b = (pixel & 0x001F) << 3;
-			uint16 color = (uint16)(((r + g + b) / 3) * level);
-			data[ly * 640 + lx] = ((color & 0xF8) << 8) | ((color & 0xFC) << 3) | (color >> 3);
+			uint8 r, g, b;
+			_zb->pbuf.getRGBAt(ly * _gameWidth + lx, r, g, b);
+			uint32 color = (uint32)(((r + g + b) / 3) * level);
+			_zb->pbuf.setPixelAt(ly * _gameWidth + lx, color, color, color);
 		}
 	}
 }
 
 void GfxTinyGL::irisAroundRegion(int x1, int y1, int x2, int y2) {
-	uint16 *data = (uint16 *)_zb->pbuf;
-	for (int ly = 0; ly < _screenHeight; ly++) {
-		for (int lx = 0; lx < _screenWidth; lx++) {
+	for (int ly = 0; ly < _gameHeight; ly++) {
+		for (int lx = 0; lx < _gameWidth; lx++) {
 			// Don't do anything with the data in the region we draw Around
-			if(lx > x1 && lx < x2 && ly > y1 && ly < y2)
+			if (lx > x1 && lx < x2 && ly > y1 && ly < y2)
 				continue;
 			// But set everything around it to black.
-			data[ly * 640 + lx] = (uint16)0.0f;
+			_zb->pbuf.setPixelAt(ly * _gameWidth + lx, 0);
 		}
 	}
 }
 
 void GfxTinyGL::drawRectangle(PrimitiveObject *primitive) {
-	uint16 *dst = (uint16 *)_zb->pbuf;
 	int x1 = primitive->getP1().x;
 	int y1 = primitive->getP1().y;
 	int x2 = primitive->getP2().x;
 	int y2 = primitive->getP2().y;
 
-	const Color &color = *primitive->getColor();
-	uint16 c = ((color.getRed() & 0xF8) << 8) | ((color.getGreen() & 0xFC) << 3) | (color.getBlue() >> 3);
+	const Color &color = primitive->getColor();
+	uint32 c = _pixelFormat.RGBToColor(color.getRed(), color.getGreen(), color.getBlue());
 
 	if (primitive->isFilled()) {
 		for (; y1 <= y2; y1++)
-			if (y1 >= 0 && y1 < 480)
+			if (y1 >= 0 && y1 < _gameHeight)
 				for (int x = x1; x <= x2; x++)
-					if (x >= 0 && x < 640)
-						WRITE_UINT16(dst + 640 * y1 + x, c);
+					if (x >= 0 && x < _gameWidth)
+						_zb->pbuf.setPixelAt(_gameWidth * y1 + x, c);
 	} else {
-		if (y1 >= 0 && y1 < 480)
+		if (y1 >= 0 && y1 < _gameHeight)
 			for (int x = x1; x <= x2; x++)
-				if (x >= 0 && x < 640)
-					WRITE_UINT16(dst + 640 * y1 + x, c);
-		if (y2 >= 0 && y2 < 480)
+				if (x >= 0 && x < _gameWidth)
+					_zb->pbuf.setPixelAt(_gameWidth * y1 + x, c);
+		if (y2 >= 0 && y2 < _gameHeight)
 			for (int x = x1; x <= x2; x++)
-				if (x >= 0 && x < 640)
-					WRITE_UINT16(dst + 640 * y2 + x, c);
-		if (x1 >= 0 && x1 < 640)
+				if (x >= 0 && x < _gameWidth)
+					_zb->pbuf.setPixelAt(_gameWidth * y2 + x, c);
+		if (x1 >= 0 && x1 < _gameWidth)
 			for (int y = y1; y <= y2; y++)
-				if (y >= 0 && y < 480)
-					WRITE_UINT16(dst + 640 * y + x1, c);
-		if (x2 >= 0 && x2 < 640)
+				if (y >= 0 && y < _gameHeight)
+					_zb->pbuf.setPixelAt(_gameWidth * y + x1, c);
+		if (x2 >= 0 && x2 < _gameWidth)
 			for (int y = y1; y <= y2; y++)
-				if (y >= 0 && y < 480)
-					WRITE_UINT16(dst + 640 * y + x2, c);
+				if (y >= 0 && y < _gameHeight)
+					_zb->pbuf.setPixelAt(_gameWidth * y + x2, c);
 	}
 }
 
 void GfxTinyGL::drawLine(PrimitiveObject *primitive) {
-	uint16 *dst = (uint16 *)_zb->pbuf;
 	int x1 = primitive->getP1().x;
 	int y1 = primitive->getP1().y;
 	int x2 = primitive->getP2().x;
 	int y2 = primitive->getP2().y;
 
-	const Color &color = *primitive->getColor();
-	uint16 c = ((color.getRed() & 0xF8) << 8) | ((color.getGreen() & 0xFC) << 3) | (color.getBlue() >> 3);
+	const Color &color = primitive->getColor();
 
 	if (x2 == x1) {
 		for (int y = y1; y <= y2; y++) {
-			if (x1 >= 0 && x1 < 640 && y >= 0 && y < 480)
-				WRITE_UINT16(dst + 640 * y + x1, c);
+			if (x1 >= 0 && x1 < _gameWidth && y >= 0 && y < _gameHeight)
+				_zb->pbuf.setPixelAt(_gameWidth * y + x1, color.getRed(), color.getGreen(), color.getBlue());
 		}
 	} else {
 		float m = (y2 - y1) / (x2 - x1);
 		int b = (int)(-m * x1 + y1);
 		for (int x = x1; x <= x2; x++) {
 			int y = (int)(m * x) + b;
-			if (x >= 0 && x < 640 && y >= 0 && y < 480)
-				WRITE_UINT16(dst + 640 * y + x, c);
+			if (x >= 0 && x < _gameWidth && y >= 0 && y < _gameHeight)
+				_zb->pbuf.setPixelAt(_gameWidth * y + x, color.getRed(), color.getGreen(), color.getBlue());
 		}
 	}
 }
 
 void GfxTinyGL::drawPolygon(PrimitiveObject *primitive) {
-	uint16 *dst = (uint16 *)_zb->pbuf;
 	int x1 = primitive->getP1().x;
 	int y1 = primitive->getP1().y;
 	int x2 = primitive->getP2().x;
@@ -1080,23 +1245,70 @@ void GfxTinyGL::drawPolygon(PrimitiveObject *primitive) {
 	float m;
 	int b;
 
-	const Color &color = *primitive->getColor();
-	uint16 c = ((color.getRed() & 0xF8) << 8) | ((color.getGreen() & 0xFC) << 3) | (color.getBlue() >> 3);
+	const Color &color = primitive->getColor();
+	uint32 c = _pixelFormat.RGBToColor(color.getRed(), color.getGreen(), color.getBlue());
 
 	m = (y2 - y1) / (x2 - x1);
 	b = (int)(-m * x1 + y1);
 	for (int x = x1; x <= x2; x++) {
 		int y = (int)(m * x) + b;
-		if (x >= 0 && x < 640 && y >= 0 && y < 480)
-			WRITE_UINT16(dst + 640 * y + x, c);
+		if (x >= 0 && x < _gameWidth && y >= 0 && y < _gameHeight)
+			_zb->pbuf.setPixelAt(_gameWidth * y + x, c);
 	}
 	m = (y4 - y3) / (x4 - x3);
 	b = (int)(-m * x3 + y3);
 	for (int x = x3; x <= x4; x++) {
 		int y = (int)(m * x) + b;
-		if (x >= 0 && x < 640 && y >= 0 && y < 480)
-			WRITE_UINT16(dst + 640 * y + x, c);
+		if (x >= 0 && x < _gameWidth && y >= 0 && y < _gameHeight)
+			_zb->pbuf.setPixelAt(_gameWidth * y + x, c);
 	}
+}
+
+void GfxTinyGL::readPixels(int x, int y, int width, int height, uint8 *buffer) {
+	uint8 r, g, b;
+	int pos = x + y * 640;
+	for (int i = 0; i < height; ++i) {
+		for (int j = 0; j < width; ++j) {
+			_zb->pbuf.getRGBAt(pos + j, r, g, b);
+			buffer[0] = r;
+			buffer[1] = g;
+			buffer[2] = b;
+			buffer[3] = 255;
+			buffer += 4;
+		}
+		pos += 640;
+	}
+}
+
+void GfxTinyGL::createSpecialtyTextures() {
+	//make a buffer big enough to hold any of the textures
+	uint8 *buffer = new uint8[256*256*4];
+
+	readPixels(0, 0, 256, 256, buffer);
+	_specialty[0].create((const char *)buffer, 256, 256);
+
+	readPixels(256, 0, 256, 256, buffer);
+	_specialty[1].create((const char *)buffer, 256, 256);
+
+	readPixels(512, 0, 128, 128, buffer);
+	_specialty[2].create((const char *)buffer, 128, 128);
+
+	readPixels(512, 128, 128, 128, buffer);
+	_specialty[3].create((const char *)buffer, 128, 128);
+
+	readPixels(0, 256, 256, 224, buffer);
+	_specialty[4].create((const char *)buffer, 256, 256);
+
+	readPixels(256, 256, 256, 224, buffer);
+	_specialty[5].create((const char *)buffer, 256, 256);
+
+	readPixels(512, 256, 128, 128, buffer);
+	_specialty[6].create((const char *)buffer, 128, 128);
+
+	readPixels(512, 384, 128, 96, buffer);
+	_specialty[7].create((const char *)buffer, 128, 128);
+
+	delete[] buffer;
 }
 
 } // end of namespace Grim

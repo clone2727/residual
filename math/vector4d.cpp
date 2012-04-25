@@ -21,7 +21,6 @@
  */
 
 #include "common/streamdebug.h"
-
 #include "math/vector4d.h"
 
 namespace Math {
@@ -51,4 +50,4 @@ void Vector4d::set(float lx, float ly, float lz, float lw) {
 	x() = lx; y() = ly; z() = lz; w() = lw;
 }
 
-}
+} // end of namespace Math

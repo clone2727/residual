@@ -57,7 +57,7 @@ typedef struct GLLight {
 	V4 ambient;
 	V4 diffuse;
 	V4 specular;
-	V4 position;	
+	V4 position;
 	V3 spot_direction;
 	float spot_exponent;
 	float spot_cutoff;
@@ -80,7 +80,7 @@ typedef struct GLMaterial {
 
 	// computed values
 	int shininess_i;
-	int do_specular;  
+	int do_specular;
 } GLMaterial;
 
 
@@ -124,7 +124,7 @@ typedef struct GLVertex {
 } GLVertex;
 
 typedef struct GLImage {
-	void *pixmap;
+	Graphics::PixelBuffer pixmap;
 	int xsize, ysize;
 } GLImage;
 
@@ -191,7 +191,7 @@ typedef struct GLContext {
 	M4 matrix_model_view_inv;
 	M4 matrix_model_projection;
 	int matrix_model_projection_updated;
-	int matrix_model_projection_no_w_transform; 
+	int matrix_model_projection_no_w_transform;
 	int apply_texture_matrix;
 
 	// viewport
@@ -259,7 +259,7 @@ typedef struct GLContext {
 
 	int shadow_mode;
 
-	// specular buffer. could probably be shared between contexts, 
+	// specular buffer. could probably be shared between contexts,
 	// but that wouldn't be 100% thread safe
 	GLSpecBuf *specbuf_first;
 	int specbuf_used_counter;
@@ -300,9 +300,9 @@ void gl_shade_vertex(GLContext *c, GLVertex *v);
 void glInitTextures(GLContext *c);
 void glEndTextures(GLContext *c);
 GLTexture *alloc_texture(GLContext *c, int h);
+void free_texture(GLContext *c, int h);
 
 // image_util.c
-void gl_convertRGB_to_5R6G5B8A(unsigned short *pixmap, unsigned char *rgba, int xsize, int ysize);
 void gl_resizeImage(unsigned char *dest, int xsize_dest, int ysize_dest,
 					unsigned char *src, int xsize_src, int ysize_src);
 void gl_resizeImageNoInterpolate(unsigned char *dest, int xsize_dest, int ysize_dest,
@@ -312,6 +312,7 @@ GLContext *gl_get_context();
 
 // specular buffer "api"
 GLSpecBuf *specbuf_get_buffer(GLContext *c, const int shininess_i, const float shininess);
+void specbuf_cleanup(GLContext *c); // free all memory used
 
 void glInit(void *zbuffer);
 void glClose();

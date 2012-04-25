@@ -27,6 +27,7 @@
 
 #include "common/str-array.h"
 #include "common/hashmap.h"
+#include "common/events.h"
 
 #include "engines/advancedDetector.h"
 
@@ -70,7 +71,8 @@ public:
 		PauseMode = 1,
 		NormalMode = 2,
 		SmushMode = 3,
-		DrawMode = 4
+		DrawMode = 4,
+		OverworldMode = 5
 	};
 	enum SpeechMode {
 		TextOnly = 1,
@@ -81,17 +83,21 @@ public:
 	GrimEngine(OSystem *syst, uint32 gameFlags, GrimGameType gameType, Common::Platform platform, Common::Language language);
 	virtual ~GrimEngine();
 
+	void clearPools();
+
 	int getGameFlags() { return _gameFlags; }
 	GrimGameType getGameType() { return _gameType; }
 	Common::Language getGameLanguage() { return _gameLanguage; }
 	Common::Platform getGamePlatform() { return _gamePlatform; }
+	bool canLoadGameStateCurrently() { return true; }
+	Common::Error loadGameState(int slot);
 
 	bool loadSaveDirectory(void);
 	void makeSystemMenu(void);
 	int modifyGameSpeed(int speedChange);
 	int getTimerDelay() const;
 
-	void setMode(EngineMode mode) { _mode = mode; }
+	void setMode(EngineMode mode) { _mode = mode; invalidateActiveActorsList(); }
 	EngineMode getMode() { return _mode; }
 	void setPreviousMode(EngineMode mode) { _previousMode = mode; }
 	EngineMode getPreviousMode() { return _previousMode; }
@@ -139,14 +145,34 @@ public:
 	void flagRefreshShadowMask(bool flag) { _refreshShadowMask = flag; }
 	bool getFlagRefreshShadowMask() { return _refreshShadowMask; }
 
-	Actor *getTalkingActor() const;
-	void setTalkingActor(Actor *actor);
-
 	void setSelectedActor(Actor *a) { _selectedActor = a; }
 	Actor *getSelectedActor() { return _selectedActor; }
 
+	/**
+	 * Tell the engine that an actor has been moved into/outside a set,
+	 * and so that it should rebuild the list of active ones.
+	 */
+	void invalidateActiveActorsList();
+	/**
+	 * Return a list of the currently active actors, i. e. the actors in the current set.
+	 */
+	const Common::List<Actor *> &getActiveActors() const { return _activeActors; }
+
+	/**
+	 * Add an actor to the list of actors that are talking
+	 */
+	void addTalkingActor(Actor *actor);
+	bool areActorsTalking() const;
+
+	void setMovieSubtitle(TextObject *to);
+
 	void saveGame(const Common::String &file);
 	void loadGame(const Common::String &file);
+
+	void changeHardwareState();
+
+	// Engine APIs
+	bool hasFeature(EngineFeature f) const;
 
 	Common::StringArray _listFiles;
 	Common::StringArray::const_iterator _listFilesIter;
@@ -154,13 +180,14 @@ public:
 	TextObjectDefaults _sayLineDefaults, _printLineDefaults, _blastTextDefaults;
 
 private:
-	void handleControls(int operation, int key, int keyModifier, uint16 ascii);
-	void handleChars(int operation, int key, int keyModifier, uint16 ascii);
+	void handleControls(Common::EventType type, const Common::KeyState &key);
+	void handleChars(Common::EventType type, const Common::KeyState &key);
 	void handleExit();
 	void handlePause();
 	void handleUserPaint();
 	void cameraChangeHandle(int prev, int next);
 	void cameraPostChangeHandle(int num);
+	void buildActiveActorsList();
 	void savegameCallback();
 
 	void savegameSave();
@@ -186,6 +213,7 @@ private:
 	bool _doFlip;
 	bool _refreshShadowMask;
 	bool _shortFrame;
+	bool _setupChanged;
 
 	unsigned _frameStart, _frameTime, _movieTime;
 	int _prevSmushFrame;
@@ -198,9 +226,16 @@ private:
 	bool *_controlsEnabled;
 	bool *_controlsState;
 
+	bool _changeHardwareState;
+	bool _changeFullscreenState;
+
 	Actor *_selectedActor;
-	Actor *_talkingActor;
 	Iris *_iris;
+	TextObject::Ptr _movieSubtitle;
+
+	bool _buildActiveActorsList;
+	Common::List<Actor *> _activeActors;
+	Common::List<Actor *> _talkingActors;
 
 	uint32 _gameFlags;
 	GrimGameType _gameType;

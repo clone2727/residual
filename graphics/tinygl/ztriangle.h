@@ -4,8 +4,7 @@
 {
 	ZBufferPoint *tp, *pr1 = 0, *pr2 = 0, *l1 = 0, *l2 = 0;
 	float fdx1, fdx2, fdy1, fdy2, fz, d1, d2;
-	unsigned short *pz1;
-	unsigned int *pz2;
+	unsigned int *pz1;
 	PIXEL *pp1;
 	int part, update_left, update_right;
 
@@ -92,13 +91,13 @@
 	dbdy = (int)(fdx1 * d2 - fdx2 * d1);
 
 #endif
-  
+
 #ifdef INTERP_ST
 	d1 = (float)(p1->s - p0->s);
 	d2 = (float)(p2->s - p0->s);
 	dsdx = (int)(fdy2 * d1 - fdy1 * d2);
 	dsdy = (int)(fdx1 * d2 - fdx2 * d1);
-  
+
 	d1 = (float)(p1->t - p0->t);
 	d2 = (float)(p2->t - p0->t);
 	dtdx = (int)(fdy2 * d1 - fdy1 * d2);
@@ -132,9 +131,8 @@
 
 	// screen coordinates
 
-	pp1 = (PIXEL *)((char *)zb->pbuf + zb->linesize * p0->y);
+	pp1 = (PIXEL *)((char *)zb->pbuf.getRawBuffer() + zb->linesize * p0->y);
 	pz1 = zb->zbuf + p0->y * zb->xsize;
-	pz2 = zb->zbuf2 + p0->y * zb->xsize;
 
 	DRAW_INIT();
 
@@ -166,7 +164,7 @@
 			} else {
 				update_left = 1;
 				update_right = 0;
-				l1 = p1; 
+				l1 = p1;
 				l2 = p2;
 			}
 			nb_lines = p2->y - p1->y + 1;
@@ -177,7 +175,7 @@
 		if (update_left) {
 			dy1 = l2->y - l1->y;
 			dx1 = l2->x - l1->x;
-			if (dy1 > 0) 
+			if (dy1 > 0)
 				tmp = (dx1 << 16) / dy1;
 			else
 				tmp = 0;
@@ -189,7 +187,7 @@
 
 #ifdef INTERP_Z
 			z1 = l1->z;
-			dzdl_min = (dzdy + dzdx * dxdy_min); 
+			dzdl_min = (dzdy + dzdx * dxdy_min);
 			dzdl_max = dzdl_min + dzdx;
 #endif
 #ifdef INTERP_RGB
@@ -230,7 +228,7 @@
 		if (update_right) {
 			dx2 = (pr2->x - pr1->x);
 			dy2 = (pr2->y - pr1->y);
-			if (dy2>0) 
+			if (dy2>0)
 				dx2dy2 = ( dx2 << 16) / dy2;
 			else
 				dx2dy2 = 0;
@@ -247,9 +245,8 @@
 				register PIXEL *pp;
 				register int n;
 #ifdef INTERP_Z
-				register unsigned short *pz;
-				register unsigned int *pz_2;
-				register unsigned int z, zz;
+				register unsigned int *pz;
+				register unsigned int z;
 #endif
 #ifdef INTERP_RGB
 				register unsigned int or1, og1, ob1;
@@ -265,7 +262,6 @@
 				pp = (PIXEL *)((char *)pp1 + x1 * PSZB);
 #ifdef INTERP_Z
 				pz = pz1 + x1;
-				pz_2 = pz2 + x1;
 				z = z1;
 #endif
 #ifdef INTERP_RGB
@@ -288,7 +284,6 @@
 					PUT_PIXEL(3);
 #ifdef INTERP_Z
 					pz += 4;
-					pz_2 += 4;
 #endif
 					pp = (PIXEL *)((char *)pp + 4 * PSZB);
 					n -= 4;
@@ -297,7 +292,6 @@
 					PUT_PIXEL(0);
 #ifdef INTERP_Z
 					pz += 1;
-					pz_2 += 1;
 #endif
 					pp = (PIXEL *)((char *)pp + PSZB);
 					n -= 1;
@@ -306,7 +300,7 @@
 #else
 			DRAW_LINE();
 #endif
-      
+
 			// left edge
 			error += derror;
 			if (error > 0) {
@@ -346,15 +340,14 @@
 				sz1 += dszdl_min;
 				tz1 += dtzdl_min;
 #endif
-			} 
-      
+			}
+
 			// right edge
 			x2 += dx2dy2;
 
 			// screen coordinates
 			pp1 = (PIXEL *)((char *)pp1 + zb->linesize);
 			pz1 += zb->xsize;
-			pz2 += zb->xsize;
 		}
 	}
 }
@@ -365,5 +358,5 @@
 #undef INTERP_STZ
 
 #undef DRAW_INIT
-#undef DRAW_LINE  
+#undef DRAW_LINE
 #undef PUT_PIXEL

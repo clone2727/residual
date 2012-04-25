@@ -21,6 +21,7 @@
  */
 
 #include "engines/myst3/database.h"
+#include "engines/myst3/myst3.h"
 
 #include "common/file.h"
 #include "common/debug.h"
@@ -30,84 +31,28 @@
 
 namespace Myst3 {
 
-Database::Database() :
+Database::Database(Myst3Engine *vm) :
+		_vm(vm),
 		_currentRoomID(0),
-		_gameVersion(0),
+		_executableVersion(0),
 		_currentRoomData(0) {
 
-	static const char *const names[] = {
-		"M3.exe",
-		"Myst III Exile for Mac OS X",
-		"Myst III Exile for Mac OS 8-9",
-		"SLUS_204.34"
-	};
+	_executableVersion = _vm->getExecutableVersion();
 
-	// Game versions database
-	// FIXME: At least clone2727's and PS2 versions are multi-language
-	static GameVersion versions[] = {
-			{ "1.2 English", 	Common::kPlatformWindows,	"87b4a792ec8f3406bfef42c0f0c30249", 0x400000, 0x86108,  0x86040,  0x861D0 },
-			{ "1.22 English", 	Common::kPlatformWindows,	"8f21c22a4ca4f383ab29cbba4df0b2b5", 0x400000, 0x86108,  0x86040,  0x861D0 },
-			{ "1.22 French", 	Common::kPlatformWindows,	"554612b239ff2d9a3364fa38e3f32b45", 0x400000, 0x86108,  0x86040,  0x861D0 },
-			{ "1.22 German", 	Common::kPlatformWindows,	"976416b2ab1c058802bf3dccc4e2f11a", 0x400000, 0x86108,  0x86040,  0x861D0 },
-			{ "1.22 Polish", 	Common::kPlatformWindows,	"00ac408dd79b0789b1fec0cc9195289a", 0x400000, 0x86108,  0x86040,  0x861D0 },
-			{ "1.24 Japanese",	Common::kPlatformWindows,	"0f7440439709e94d20e3ce4656a965ee", 0x400000, 0x86108,  0x86040,  0x861E8 },
-			{ "1.27 French", 	Common::kPlatformWindows,	"00e062994ddf98e0d5cf4aa78e738f47", 0x400000, 0x86110,  0x86040,  0x861F0 },
-			{ "1.27 English", 	Common::kPlatformWindows,	"a9e992323fa5048f0947d9ebd44088ac", 0x400000, 0x86110,  0x86040,  0x861F0 },
-			{ "1.27 Dutch", 	Common::kPlatformWindows,	"e9111bbae979d9c9c536aaf3601bd46f", 0x400000, 0x86110,  0x86040,  0x861F0 },
-			{ "1.27 German", 	Common::kPlatformWindows,	"e3ce37f0bb93dfc4df73de88a8c15e1d", 0x400000, 0x86110,  0x86040,  0x861F0 },
-			{ "1.27 Italian", 	Common::kPlatformWindows,	"6e7bda56f3f8542ba936d7556256d5eb", 0x400000, 0x86110,  0x86040,  0x861F0 },
-			{ "1.27 Spanish", 	Common::kPlatformWindows, 	"67cb6a606f123b327fac0d16f82b0adb", 0x400000, 0x86110,  0x86040,  0x861F0 },
-			{ "1.27 English", 	Common::kPlatformMacintosh,	"675e469044ef406c92be36be5ebe92a3", 0,        0x11934,  0x11864,  0x11A10 },
-			{ "1.27 English", 	Common::kPlatformMacintosh,	"5951edd640c0455555280515974c4008", 0,        0x11378,  0x112A8,  0x11454 },
-			{ "English", 		Common::kPlatformPS2,		"c6d6dadac5ae3b882ed276bde7e92031", 0xFFF00,  0x14EB10, 0x14EA10, 0x14ECA0 },
-	};
+	if (_executableVersion != 0) {
+		debug("Initializing database from %s (Platform: %s) (%s)", _executableVersion->executable, getPlatformDescription(_vm->getPlatform()), _executableVersion->description);
 
-	// First, see what executable files we have
-	Common::Array<Common::String> fileMD5;
-
-	for (uint i = 0; i < ARRAYSIZE(names); i++) {
-		Common::File file;
-
-		if (file.open(names[i]))
-			fileMD5.push_back(Common::computeStreamMD5AsString(file, 0));
-		else
-			fileMD5.push_back(Common::String());
-
-		file.close();
-	}
-
-	// Compare our versions to the MD5's
-	for (uint i = 0; i < ARRAYSIZE(versions); i++) {
-		for (uint j = 0; j < fileMD5.size(); j++) {
-			if (fileMD5[j].equals(versions[i].md5)) {
-				_exePath = names[j];
-				_gameVersion = &versions[i];
-				break;
-			}
+		if (_executableVersion->flags & kFlagSafeDisc) {
+			// TODO: SafeDisc encrypted binary
+			error("Unhandled SafeDisc encrypted executable");
 		}
-	}
-
-	if (_gameVersion != 0) {
-		debug("Initializing database from %s (Platform: %s) (%s)", _exePath.c_str(), getPlatformDescription(_gameVersion->platform), _gameVersion->description);
 	} else {
-		// Print out any unknown EXE's
-		bool foundOneEXE = false;
-		for (uint i = 0; i < fileMD5.size(); i++) {
-			if (!fileMD5[i].empty()) {
-				warning("Unknown EXE: %s (md5: %s)", names[i], fileMD5[i].c_str());
-				foundOneEXE = true;
-			}
-		}
-
-		if (foundOneEXE)
-			error("Unknown game version");
-		else
-			error("Could not find any executable to load");
+		error("Could not find any executable to load");
 	}
 
 	// Load the ages and rooms description
 	Common::SeekableSubReadStreamEndian *file = openDatabaseFile();
-	file->seek(_gameVersion->ageTableOffset);
+	file->seek(_executableVersion->ageTableOffset);
 	_ages = loadAges(*file);
 
 	for (uint i = 0; i < _ages.size(); i++) {
@@ -116,7 +61,7 @@ Database::Database() :
 		// Read the room offset table
 		Common::Array<uint32> roomsOffsets;
 		for (uint j = 0; j < _ages[i].roomCount; j++) {
-			uint32 offset = file->readUint32() - _gameVersion->baseOffset;
+			uint32 offset = file->readUint32() - _executableVersion->baseOffset;
 			roomsOffsets.push_back(offset);
 		}
 
@@ -128,10 +73,10 @@ Database::Database() :
 		}
 	}
 
-	file->seek(_gameVersion->nodeInitScriptOffset);
+	file->seek(_executableVersion->nodeInitScriptOffset);
 	_nodeInitScript = loadOpcodes(*file);
 
-	file->seek(_gameVersion->soundNamesOffset);
+	file->seek(_executableVersion->soundNamesOffset);
 	loadSoundNames(file);
 
 	delete file;
@@ -204,10 +149,31 @@ RoomData *Database::findRoomData(const uint32 & roomID)
 
 Common::Array<NodePtr> Database::loadRoomScripts(RoomData *room) {
 	Common::Array<NodePtr> nodes;
-
 	Common::SeekableSubReadStreamEndian *file = openDatabaseFile();
-	file->seek(room->scriptsOffset);
 
+	// Load the node scripts
+	if (room->scriptsOffset) {
+		file->seek(room->scriptsOffset);
+		loadRoomNodeScripts(file, nodes);
+	}
+
+	// Load the ambient sound scripts, if any
+	if (room->ambSoundsOffset) {
+		file->seek(room->ambSoundsOffset);
+		loadRoomSoundScripts(file, nodes, false);
+	}
+
+	if (room->unkOffset) {
+		file->seek(room->unkOffset);
+		loadRoomSoundScripts(file, nodes, true);
+	}
+
+	delete file;
+
+	return nodes;
+}
+
+void Database::loadRoomNodeScripts(Common::SeekableSubReadStreamEndian *file, Common::Array<NodePtr> &nodes) {
 	while (1) {
 		int16 id = file->readUint16();
 
@@ -247,10 +213,86 @@ Common::Array<NodePtr> Database::loadRoomScripts(RoomData *room) {
 			}
 		}
 	}
+}
 
-	delete file;
+void Database::loadRoomSoundScripts(Common::SeekableSubReadStreamEndian *file, Common::Array<NodePtr> &nodes, bool background) {
+	while (1) {
+		int16 id = file->readUint16();
 
-	return nodes;
+		// End of list
+		if (id == 0)
+			break;
+
+		if (id < -10)
+			error("Unimplemented node list command");
+
+		if (id > 0) {
+			// Normal node, find the node if existing
+			NodePtr node;
+			for (uint i = 0; i < nodes.size(); i++)
+				if (nodes[i]->id == id) {
+					node = nodes[i];
+					break;
+				}
+
+			// Node not found, create a new one
+			if (!node) {
+				node = NodePtr(new NodeData());
+				node->id = id;
+				nodes.push_back(node);
+			}
+
+			if (background)
+				node->backgroundSoundScripts.push_back(loadCondScripts(*file));
+			else
+				node->soundScripts.push_back(loadCondScripts(*file));
+		} else {
+			// Several nodes sharing the same scripts
+			// Find the node ids the script applies to
+			Common::Array<int16> nodeIds;
+
+			if (id == -10)
+				do {
+					id = file->readUint16();
+					if (id < 0) {
+						uint16 end = file->readUint16();
+						for (int i = -id; i < end; i++)
+							nodeIds.push_back(i);
+
+					} else if (id > 0) {
+						nodeIds.push_back(id);
+					}
+				} while (id);
+			else
+				for (int i = 0; i < -id; i++) {
+					nodeIds.push_back(file->readUint16());
+				}
+
+			// Load the script
+			Common::Array<CondScript> scripts = loadCondScripts(*file);
+
+			// Add the script to each matching node
+			for (uint i = 0; i < nodeIds.size(); i++) {
+				NodePtr node;
+
+				// Find the current node if existing
+				for (uint j = 0; j < nodes.size(); j++)
+					if (nodes[j]->id == nodeIds[i]) {
+						node = nodes[j];
+						break;
+					}
+
+				// Node not found, skip it
+				if (!node)
+					continue;
+
+				if (background)
+					node->backgroundSoundScripts.push_back(scripts);
+				else
+					node->soundScripts.push_back(scripts);
+			}
+		}
+	}
 }
 
 void Database::setCurrentRoom(const uint32 roomID) {
@@ -299,23 +341,28 @@ Common::Array<HotSpot> Database::loadHotspots(Common::ReadStreamEndian &s) {
 	return scripts;
 }
 
-Common::Array<Opcode> Database::loadOpcodes(Common::ReadStreamEndian &s)
-{
+Common::Array<Opcode> Database::loadOpcodes(Common::ReadStreamEndian &s) {
 	Common::Array<Opcode> script;
 
-	while(1){
+	while (1) {
 		Opcode opcode;
 		uint16 code = s.readUint16();
 
 		opcode.op = code & 0xff;
 		uint8 count = code >> 8;
-		if(count == 0 && opcode.op == 0)
+		if (count == 0 && opcode.op == 0)
 			break;
 
-		for(int i = 0;i < count;i++){
+		// The v1.0 executables use a slightly different opcode set
+		// Since it's a simple conversion, we'll handle that here
+		if ((_executableVersion->flags & kFlagVersion10) && opcode.op >= 122)
+			opcode.op++;
+
+		for (int i = 0; i < count; i++) {
 			int16 value = s.readSint16();
 			opcode.args.push_back(value);
 		}
+
 		script.push_back(opcode);
 	}
 
@@ -382,7 +429,7 @@ Common::Array<AgeData> Database::loadAges(Common::ReadStreamEndian &s)
 	for (uint i = 0; i < 10; i++) {
 		AgeData age;
 
-		if (_gameVersion->platform == Common::kPlatformPS2) {
+		if (_vm->getPlatform() == Common::kPlatformPS2) {
 			// Really 64-bit values
 			age.id = s.readUint32LE();
 			s.readUint32LE();
@@ -390,7 +437,7 @@ Common::Array<AgeData> Database::loadAges(Common::ReadStreamEndian &s)
 			s.readUint32LE();
 			age.roomCount = s.readUint32LE();
 			s.readUint32LE();
-			age.roomsOffset = s.readUint32LE() - _gameVersion->baseOffset;
+			age.roomsOffset = s.readUint32LE() - _executableVersion->baseOffset;
 			s.readUint32LE();
 			age.labelId = s.readUint32LE();
 			s.readUint32LE();
@@ -398,7 +445,7 @@ Common::Array<AgeData> Database::loadAges(Common::ReadStreamEndian &s)
 			age.id = s.readUint32();
 			age.disk = s.readUint32();
 			age.roomCount = s.readUint32();
-			age.roomsOffset = s.readUint32() - _gameVersion->baseOffset;
+			age.roomsOffset = s.readUint32() - _executableVersion->baseOffset;
 			age.labelId = s.readUint32();
 		}
 
@@ -411,7 +458,7 @@ Common::Array<AgeData> Database::loadAges(Common::ReadStreamEndian &s)
 RoomData Database::loadRoomDescription(Common::ReadStreamEndian &s) {
 	RoomData room;
 
-	if (_gameVersion->platform == Common::kPlatformPS2) {
+	if (_vm->getPlatform() == Common::kPlatformPS2) {
 		room.id = s.readUint32LE(); s.readUint32LE();
 		s.read(&room.name, 8);
 		room.scriptsOffset = s.readUint32LE(); s.readUint32LE();
@@ -430,13 +477,13 @@ RoomData Database::loadRoomDescription(Common::ReadStreamEndian &s) {
 	}
 
 	if (room.scriptsOffset != 0)
-		room.scriptsOffset -= _gameVersion->baseOffset;
+		room.scriptsOffset -= _executableVersion->baseOffset;
 
 	if (room.ambSoundsOffset != 0)
-		room.ambSoundsOffset -= _gameVersion->baseOffset;
+		room.ambSoundsOffset -= _executableVersion->baseOffset;
 
 	if (room.unkOffset != 0)
-		room.unkOffset -= _gameVersion->baseOffset;
+		room.unkOffset -= _executableVersion->baseOffset;
 
 	return room;
 }
@@ -470,12 +517,12 @@ uint32 Database::getAgeLabelId(uint32 ageID) {
 }
 
 Common::SeekableSubReadStreamEndian *Database::openDatabaseFile() const {
-	assert(_gameVersion);
+	assert(_executableVersion);
 
-	Common::SeekableReadStream *stream = SearchMan.createReadStreamForMember(_exePath);
+	Common::SeekableReadStream *stream = SearchMan.createReadStreamForMember(_executableVersion->executable);
 	bool bigEndian = false;
 
-	if (_gameVersion->platform == Common::kPlatformMacintosh) {
+	if (_vm->getPlatform() == Common::kPlatformMacintosh) {
 		// The data we need is always in segment 1
 		Common::SeekableReadStream *segment = decompressPEFDataSegment(stream, 1);
 		delete stream;
@@ -650,7 +697,7 @@ void Database::loadSoundNames(Common::ReadStreamEndian *s) {
 		uint32 id = s->readUint32();
 
 		// 64-bit value in the PS2 binary
-		if (_gameVersion->platform == Common::kPlatformPS2)
+		if (_vm->getPlatform() == Common::kPlatformPS2)
 			s->readUint32();
 
 		if (!id)

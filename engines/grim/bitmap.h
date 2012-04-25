@@ -23,7 +23,21 @@
 #ifndef GRIM_BITMAP_H
 #define GRIM_BITMAP_H
 
+#include "graphics/pixelformat.h"
+
+#include "common/endian.h"
+#include "common/hashmap.h"
+#include "common/hash-str.h"
+
 #include "engines/grim/pool.h"
+
+namespace Graphics {
+class PixelBuffer;
+}
+
+namespace Common {
+class SeekableReadStream;
+}
 
 namespace Grim {
 
@@ -36,10 +50,14 @@ namespace Grim {
  */
 class BitmapData {
 public:
-	BitmapData(const Common::String &fname, Common::SeekableReadStream *data);
-	BitmapData(const char *data, int w, int h, int bpp, const char *fname);
+	BitmapData(const Common::String &fname);
+	BitmapData(const Graphics::PixelBuffer &buf, int w, int h, const char *fname);
 	BitmapData();
 	~BitmapData();
+
+	void freeData();
+
+	void load();
 
 	/**
 	 * Loads an EMI TILE-bitmap.
@@ -47,23 +65,28 @@ public:
 	 * @param data		the data for the TILE.
 	 * @param len		the length of the data.
 	 */
-	bool loadTile(const Common::String &fname, Common::SeekableReadStream *data);
-	bool loadGrimBm(const Common::String &fname, Common::SeekableReadStream *data);
-	bool loadTGA(const Common::String &fname, Common::SeekableReadStream *data);
+	bool loadTile(Common::SeekableReadStream *data);
+	bool loadGrimBm(Common::SeekableReadStream *data);
+	bool loadTGA(Common::SeekableReadStream *data);
 
-	static BitmapData *getBitmapData(const Common::String &fname, Common::SeekableReadStream *data);
+	static BitmapData *getBitmapData(const Common::String &fname);
 	static Common::HashMap<Common::String, BitmapData *> *_bitmaps;
 
-	char *getImageData(int num) const;
+	const Graphics::PixelBuffer &getImageData(int num) const;
 
 	/**
 	 * Convert a bitmap to another color-format.
 	 *
-	 * @param num		the bitmap to convert.
 	 * @param format	the format to convert to.
-	 * @see colorFormat
 	 */
-	void convertToColorFormat(int num, int format);
+	void convertToColorFormat(const Graphics::PixelFormat &format);
+
+	/**
+	 * Convert a bitmap to another color-format.
+	 *
+	 * @param format	the format to convert to.
+	 */
+	void convertToColorFormat(int num, const Graphics::PixelFormat &format);
 
 	Common::String _fname;
 	int _numImages;
@@ -74,15 +97,16 @@ public:
 	int _colorFormat;
 	void *_texIds;
 	bool _hasTransparency;
-	char _filename[32];
+	bool _loaded;
+	bool _keepData;
 
 	int _refCount;
 
-private:
-	char **_data;
+// private:
+	Graphics::PixelBuffer *_data;
 };
 
-class Bitmap : public PoolObject<Bitmap, MKTAG('V', 'B', 'U', 'F')> {
+class Bitmap : public PoolObject<Bitmap> {
 public:
 	/**
 	 * Construct a bitmap from the given data.
@@ -91,13 +115,18 @@ public:
 	 * @param data		the actual data to construct from
 	 * @param len		the length of the data
 	 */
-	Bitmap(const Common::String &filename, Common::SeekableReadStream *data);
-	Bitmap(const char *data, int width, int height, int bpp, const char *filename);
+	Bitmap(const Common::String &filename);
+	Bitmap(const Graphics::PixelBuffer &buf, int width, int height, const char *filename);
 	Bitmap();
+
+	static int32 getStaticTag() { return MKTAG('V', 'B', 'U', 'F'); }
+
+	static Bitmap *create(const Common::String &filename);
 
 	const Common::String &getFilename() const { return _data->_fname; }
 
-	void draw() const;
+	void draw();
+	void draw(int x, int y);
 
 	/**
 	 * Set which image in an animated bitmap to use
@@ -106,21 +135,18 @@ public:
 	 */
 	void setActiveImage(int n);
 
-	int getNumImages() const { return _data->_numImages; }
+	int getNumImages() const;
 	int getActiveImage() const { return _currImage; }
 	bool getHasTransparency() const { return _data->_hasTransparency; }
 	int getFormat() const { return _data->_format; }
 	int getWidth() const { return _data->_width; }
 	int getHeight() const { return _data->_height; }
-	int getX() const { return _x; }
-	int getY() const { return _y; }
-	void setX(int xPos) { _x = xPos; }
-	void setY(int yPos) { _y = yPos; }
 
-	char *getData(int num) const { return _data->getImageData(num); }
-	char *getData() const { return getData(_currImage); }
+	const Graphics::PixelBuffer &getData(int num) const { return _data->getImageData(num); }
+	const Graphics::PixelBuffer &getData() const { return getData(_currImage); }
 	void *getTexIds() const { return _data->_texIds; }
 	int getNumTex() const { return _data->_numTex; }
+	const Graphics::PixelFormat &getPixelFormat(int num) const;
 
 	void saveState(SaveGame *state) const;
 	void restoreState(SaveGame *state);
@@ -131,12 +157,11 @@ private:
 	void freeData();
 
 	BitmapData *_data;
-	/** 
+	/**
 	 * Specifies a one-based index to the current image in BitmapData.
 	 * _currImage==0 means a null image is chosen.
 	 */
 	int _currImage;
-	int _x, _y;
 };
 
 } // end of namespace Grim

@@ -30,6 +30,8 @@
 
 #include "common/fs.h"
 #include "common/config-manager.h"
+#include "common/gui_options.h"
+#include "common/rendermode.h"
 #include "common/system.h"
 #include "common/textconsole.h"
 #include "common/translation.h"
@@ -79,7 +81,7 @@ static const char *outputRateLabels[] = { _s("<default>"), _s("8 kHz"), _s("11kH
 static const int outputRateValues[] = { 0, 8000, 11025, 22050, 44100, 48000, -1 };
 
 OptionsDialog::OptionsDialog(const Common::String &domain, int x, int y, int w, int h)
-	: Dialog(x, y, w, h), _domain(domain), _graphicsTabId(-1), _tabWidget(0) {
+	: Dialog(x, y, w, h), _domain(domain), _graphicsTabId(-1), _midiTabId(-1), _pathsTabId(-1), _tabWidget(0) {
 	init();
 }
 
@@ -100,7 +102,7 @@ void OptionsDialog::init() {
 	_renderModePopUpDesc = 0;
 	_fullscreenCheckbox = 0;
 	_aspectCheckbox = 0;
-	_disableDitheringCheckbox = 0;
+	_softwareRenderingCheckbox = 0;
 	_enableAudioSettings = false;
 	_midiPopUp = 0;
 	_midiPopUpDesc = 0;
@@ -163,6 +165,21 @@ void OptionsDialog::open() {
 	if (ConfMan.hasKey("guioptions", _domain)) {
 		_guioptionsString = ConfMan.get("guioptions", _domain);
 		_guioptions = parseGameGUIOptions(_guioptionsString);
+	}
+
+	// Graphic options
+	if (_fullscreenCheckbox) {
+#ifdef SMALL_SCREEN_DEVICE
+		_fullscreenCheckbox->setState(true);
+		_fullscreenCheckbox->setEnabled(false);
+#else // !SMALL_SCREEN_DEVICE
+		// Fullscreen setting
+		_fullscreenCheckbox->setState(ConfMan.getBool("fullscreen", _domain));
+#endif // SMALL_SCREEN_DEVICE
+
+		// Software rendering setting - ResidualVM specific
+		_softwareRenderingCheckbox->setEnabled(true);
+		_softwareRenderingCheckbox->setState(ConfMan.getBool("soft_renderer", _domain));
 	}
 
 	// Audio options
@@ -231,21 +248,119 @@ void OptionsDialog::open() {
 		vol = ConfMan.getInt("speech_volume", _domain);
 		_speechVolumeSlider->setValue(vol);
 		_speechVolumeLabel->setValue(vol);
+
+		bool val = false;
+		if (ConfMan.hasKey("mute", _domain)) {
+			val = ConfMan.getBool("mute", _domain);
+		} else {
+			ConfMan.setBool("mute", false);
+		}
+		_muteCheckbox->setState(val);
+	}
+
+	// Subtitle options
+	if (_subToggleGroup) {
+		int speed;
+		int sliderMaxValue = _subSpeedSlider->getMaxValue();
+
+		int subMode = getSubtitleMode(ConfMan.getBool("subtitles", _domain), ConfMan.getBool("speech_mute", _domain));
+		_subToggleGroup->setValue(subMode);
+
+		// Engines that reuse the subtitle speed widget set their own max value.
+		// Scale the config value accordingly (see addSubtitleControls)
+		speed = (ConfMan.getInt("talkspeed", _domain) * sliderMaxValue + 255 / 2) / 255;
+		_subSpeedSlider->setValue(speed);
+		_subSpeedLabel->setValue(speed);
 	}
 }
 
 void OptionsDialog::close() {
 	if (getResult()) {
+
+		// Graphic options
+		bool graphicsModeChanged = false;
+		if (_fullscreenCheckbox) {
+			if (_enableGraphicSettings) {
+				if (ConfMan.getBool("fullscreen", _domain) != _fullscreenCheckbox->getState())
+					graphicsModeChanged = true;
+				ConfMan.setBool("fullscreen", _fullscreenCheckbox->getState(), _domain);
+				ConfMan.setBool("soft_renderer", _softwareRenderingCheckbox->getState(), _domain);
+			} else {
+				ConfMan.removeKey("fullscreen", _domain);
+				ConfMan.removeKey("soft_renderer", _domain);
+			}
+		}
+
+		// Setup graphics again if needed
+		if (_domain == Common::ConfigManager::kApplicationDomain && graphicsModeChanged) {
+			g_system->beginGFXTransaction();
+			g_system->setGraphicsMode(ConfMan.get("gfx_mode", _domain).c_str());
+
+			if (ConfMan.hasKey("aspect_ratio"))
+				g_system->setFeatureState(OSystem::kFeatureAspectRatioCorrection, ConfMan.getBool("aspect_ratio", _domain));
+			if (ConfMan.hasKey("fullscreen"))
+				g_system->setFeatureState(OSystem::kFeatureFullscreenMode, ConfMan.getBool("fullscreen", _domain));
+			OSystem::TransactionError gfxError = g_system->endGFXTransaction();
+
+			// Since this might change the screen resolution we need to give
+			// the GUI a chance to update it's internal state. Otherwise we might
+			// get a crash when the GUI tries to grab the overlay.
+			//
+			// This fixes bug #3303501 "Switching from HQ2x->HQ3x crashes ScummVM"
+			//
+			// It is important that this is called *before* any of the current
+			// dialog's widgets are destroyed (for example before
+			// Dialog::close) is called, to prevent crashes caused by invalid
+			// widgets being referenced or similar errors.
+			g_gui.checkScreenChange();
+
+			if (gfxError != OSystem::kTransactionSuccess) {
+				// Revert ConfMan to what OSystem is using.
+				Common::String message = _("Failed to apply some of the graphic options changes:");
+
+				if (gfxError & OSystem::kTransactionModeSwitchFailed) {
+					const OSystem::GraphicsMode *gm = g_system->getSupportedGraphicsModes();
+					while (gm->name) {
+						if (gm->id == g_system->getGraphicsMode()) {
+							ConfMan.set("gfx_mode", gm->name, _domain);
+							break;
+						}
+						gm++;
+					}
+					message += "\n";
+					message += _("the video mode could not be changed.");
+				}
+
+				if (gfxError & OSystem::kTransactionAspectRatioFailed) {
+					ConfMan.setBool("aspect_ratio", g_system->getFeatureState(OSystem::kFeatureAspectRatioCorrection), _domain);
+					message += "\n";
+					message += _("the fullscreen setting could not be changed");
+				}
+
+				if (gfxError & OSystem::kTransactionFullscreenFailed) {
+					ConfMan.setBool("fullscreen", g_system->getFeatureState(OSystem::kFeatureFullscreenMode), _domain);
+					message += "\n";
+					message += _("the aspect ratio setting could not be changed");
+				}
+
+				// And display the error
+				GUI::MessageDialog dialog(message);
+				dialog.runModal();
+			}
+		}
+
 		// Volume options
 		if (_musicVolumeSlider) {
 			if (_enableVolumeSettings) {
 				ConfMan.setInt("music_volume", _musicVolumeSlider->getValue(), _domain);
 				ConfMan.setInt("sfx_volume", _sfxVolumeSlider->getValue(), _domain);
 				ConfMan.setInt("speech_volume", _speechVolumeSlider->getValue(), _domain);
+				ConfMan.setBool("mute", _muteCheckbox->getState(), _domain);
 			} else {
 				ConfMan.removeKey("music_volume", _domain);
 				ConfMan.removeKey("sfx_volume", _domain);
 				ConfMan.removeKey("speech_volume", _domain);
+				ConfMan.removeKey("mute", _domain);
 			}
 		}
 
@@ -317,6 +432,43 @@ void OptionsDialog::close() {
 				ConfMan.removeKey("enable_gs", _domain);
 			}
 		}
+
+		// Subtitle options
+		if (_subToggleGroup) {
+			if (_enableSubtitleSettings) {
+				bool subtitles, speech_mute;
+				int talkspeed;
+				int sliderMaxValue = _subSpeedSlider->getMaxValue();
+
+				switch (_subToggleGroup->getValue()) {
+				case kSubtitlesSpeech:
+					subtitles = speech_mute = false;
+					break;
+				case kSubtitlesBoth:
+					subtitles = true;
+					speech_mute = false;
+					break;
+				case kSubtitlesSubs:
+				default:
+					subtitles = speech_mute = true;
+					break;
+				}
+
+				ConfMan.setBool("subtitles", subtitles, _domain);
+				ConfMan.setBool("speech_mute", speech_mute, _domain);
+
+				// Engines that reuse the subtitle speed widget set their own max value.
+				// Scale the config value accordingly (see addSubtitleControls)
+				talkspeed = (_subSpeedSlider->getValue() * 255 + sliderMaxValue / 2) / sliderMaxValue;
+				ConfMan.setInt("talkspeed", talkspeed, _domain);
+
+			} else {
+				ConfMan.removeKey("subtitles", _domain);
+				ConfMan.removeKey("talkspeed", _domain);
+				ConfMan.removeKey("speech_mute", _domain);
+			}
+		}
+
 		// Save config file
 		ConfMan.flushToDisk();
 	}
@@ -342,6 +494,15 @@ void OptionsDialog::handleCommand(CommandSender *sender, uint32 cmd, uint32 data
 		_speechVolumeLabel->setValue(_speechVolumeSlider->getValue());
 		_speechVolumeLabel->draw();
 		break;
+	case kMuteAllChanged:
+		// 'true' because if control is disabled then event do not pass
+		setVolumeSettingsState(true);
+		break;
+	case kSubtitleToggle:
+		// We update the slider settings here, when there are sliders, to
+		// disable the speech volume in case we are in subtitle only mode.
+		if (_musicVolumeSlider)
+			setVolumeSettingsState(true);
 		break;
 	case kSubtitleSpeedChanged:
 		_subSpeedLabel->setValue(_subSpeedSlider->getValue());
@@ -372,10 +533,16 @@ void OptionsDialog::setGraphicSettingsState(bool enabled) {
 	_enableGraphicSettings = enabled;
 
 #ifndef SMALL_SCREEN_DEVICE
+	_fullscreenCheckbox->setEnabled(enabled);
 #endif
+	if (enabled)
+		_softwareRenderingCheckbox->setEnabled(true);
+	else
+		_softwareRenderingCheckbox->setEnabled(false);
 }
 
 void OptionsDialog::setAudioSettingsState(bool enabled) {
+	return; //ResidualVM: do not enable midi
 	_enableAudioSettings = enabled;
 	_midiPopUpDesc->setEnabled(enabled);
 	_midiPopUp->setEnabled(enabled);
@@ -397,6 +564,7 @@ void OptionsDialog::setAudioSettingsState(bool enabled) {
 }
 
 void OptionsDialog::setMIDISettingsState(bool enabled) {
+	return; //ResidualVM: do not enable midi
 	if (_guioptions.contains(GUIO_NOMIDI))
 		enabled = false;
 
@@ -420,6 +588,7 @@ void OptionsDialog::setMIDISettingsState(bool enabled) {
 }
 
 void OptionsDialog::setMT32SettingsState(bool enabled) {
+	return; //ResidualVM: do not enable midi
 	_enableMT32Settings = enabled;
 
 	_mt32DevicePopUpDesc->setEnabled(_domain.equals(Common::ConfigManager::kApplicationDomain) ? enabled : false);
@@ -434,7 +603,7 @@ void OptionsDialog::setVolumeSettingsState(bool enabled) {
 
 	_enableVolumeSettings = enabled;
 
-	ena = enabled;
+	ena = enabled && !_muteCheckbox->getState();
 	if (_guioptions.contains(GUIO_NOMUSIC))
 		ena = false;
 
@@ -442,7 +611,7 @@ void OptionsDialog::setVolumeSettingsState(bool enabled) {
 	_musicVolumeSlider->setEnabled(ena);
 	_musicVolumeLabel->setEnabled(ena);
 
-	ena = enabled;
+	ena = enabled && !_muteCheckbox->getState();
 	if (_guioptions.contains(GUIO_NOSFX))
 		ena = false;
 
@@ -450,13 +619,18 @@ void OptionsDialog::setVolumeSettingsState(bool enabled) {
 	_sfxVolumeSlider->setEnabled(ena);
 	_sfxVolumeLabel->setEnabled(ena);
 
-	ena = enabled;
+	ena = enabled && !_muteCheckbox->getState();
+	// Disable speech volume slider, when we are in subtitle only mode.
+	if (_subToggleGroup)
+		ena = ena && _subToggleGroup->getValue() != kSubtitlesSubs;
 	if (_guioptions.contains(GUIO_NOSPEECH))
 		ena = false;
 
 	_speechVolumeDesc->setEnabled(ena);
 	_speechVolumeSlider->setEnabled(ena);
 	_speechVolumeLabel->setEnabled(ena);
+
+	_muteCheckbox->setEnabled(enabled);
 }
 
 void OptionsDialog::setSubtitleSettingsState(bool enabled) {
@@ -480,11 +654,15 @@ void OptionsDialog::setSubtitleSettingsState(bool enabled) {
 }
 
 void OptionsDialog::addGraphicControls(GuiObject *boss, const Common::String &prefix) {
+	// Fullscreen checkbox
+	_fullscreenCheckbox = new CheckboxWidget(boss, prefix + "grFullscreenCheckbox", _("Fullscreen mode"));
 
+	_softwareRenderingCheckbox = new CheckboxWidget(boss, prefix + "grSoftwareRendering", _("Software Rendering"), _("Enable software rendering"));
 	_enableGraphicSettings = true;
 }
 
 void OptionsDialog::addAudioControls(GuiObject *boss, const Common::String &prefix) {
+	return; //ResidualVM: do not enable midi
 	// The MIDI mode popup & a label
 	if (g_system->getOverlayWidth() > 320)
 		_midiPopUpDesc = new StaticTextWidget(boss, prefix + "auMidiPopupDesc", _domain == Common::ConfigManager::kApplicationDomain ? _("Preferred Device:") : _("Music Device:"), _domain == Common::ConfigManager::kApplicationDomain ? _("Specifies preferred sound device or sound card emulator") : _("Specifies output sound device or sound card emulator"));
@@ -538,6 +716,7 @@ void OptionsDialog::addAudioControls(GuiObject *boss, const Common::String &pref
 }
 
 void OptionsDialog::addMIDIControls(GuiObject *boss, const Common::String &prefix) {
+	return; //ResidualVM: do not enable midi
 	_gmDevicePopUpDesc = new StaticTextWidget(boss, prefix + "auPrefGmPopupDesc", _("GM Device:"), _("Specifies default sound device for General MIDI output"));
 	_gmDevicePopUp = new PopUpWidget(boss, prefix + "auPrefGmPopup");
 
@@ -593,6 +772,7 @@ void OptionsDialog::addMIDIControls(GuiObject *boss, const Common::String &prefi
 }
 
 void OptionsDialog::addMT32Controls(GuiObject *boss, const Common::String &prefix) {
+	return; //ResidualVM: do not enable midi
 	_mt32DevicePopUpDesc = new StaticTextWidget(boss, prefix + "auPrefMt32PopupDesc", _("MT-32 Device:"), _("Specifies default sound device for Roland MT-32/LAPC1/CM32l/CM64 output"));
 	_mt32DevicePopUp = new PopUpWidget(boss, prefix + "auPrefMt32Popup");
 
@@ -682,6 +862,8 @@ void OptionsDialog::addVolumeControls(GuiObject *boss, const Common::String &pre
 	_musicVolumeSlider->setMaxValue(Audio::Mixer::kMaxMixerVolume);
 	_musicVolumeLabel->setFlags(WIDGET_CLEARBG);
 
+	_muteCheckbox = new CheckboxWidget(boss, prefix + "vcMuteCheckbox", _("Mute All"), 0, kMuteAllChanged);
+
 	if (g_system->getOverlayWidth() > 320)
 		_sfxVolumeDesc = new StaticTextWidget(boss, prefix + "vcSfxText", _("SFX volume:"), _("Special sound effects volume"));
 	else
@@ -705,6 +887,22 @@ void OptionsDialog::addVolumeControls(GuiObject *boss, const Common::String &pre
 	_enableVolumeSettings = true;
 }
 
+void OptionsDialog::addEngineControls(GuiObject *boss, const Common::String &prefix, const ExtraGuiOptions &engineOptions) {
+	// Note: up to 7 engine options can currently fit on screen (the most that
+	// can fit in a 320x200 screen with the classic theme).
+	// TODO: Increase this number by including the checkboxes inside a scroll
+	// widget. The appropriate number of checkboxes will need to be added to
+	// the theme files.
+
+	uint i = 1;
+	ExtraGuiOptions::const_iterator iter;
+	for (iter = engineOptions.begin(); iter != engineOptions.end(); ++iter, ++i) {
+		Common::String id = Common::String::format("%d", i);
+		_engineCheckboxes.push_back(new CheckboxWidget(boss, 
+			prefix + "customOption" + id + "Checkbox", _(iter->label), _(iter->tooltip)));
+	}
+}
+
 bool OptionsDialog::loadMusicDeviceSetting(PopUpWidget *popup, Common::String setting, MusicType preferredType) {
 	if (!popup || !popup->isEnabled())
 		return true;
@@ -718,7 +916,7 @@ bool OptionsDialog::loadMusicDeviceSetting(PopUpWidget *popup, Common::String se
 			for (MusicDevices::iterator d = i.begin(); d != i.end(); ++d) {
 				if (setting.empty() ? (preferredType == d->getMusicType()) : (drv == d->getCompleteId())) {
 					popup->setSelectedTag(d->getHandle());
-					return popup->getSelected() == -1 ? false : true;
+					return popup->getSelected() != -1;
 				}
 			}
 		}
@@ -805,7 +1003,7 @@ GlobalOptionsDialog::GlobalOptionsDialog()
 	//
 	// 3) The MIDI tab
 	//
-	tab->addTab(_("MIDI"));
+	_midiTabId = tab->addTab(_("MIDI"));
 	addMIDIControls(tab, "GlobalOptions_MIDI.");
 
 	//
@@ -818,9 +1016,9 @@ GlobalOptionsDialog::GlobalOptionsDialog()
 	// 5) The Paths tab
 	//
 	if (g_system->getOverlayWidth() > 320)
-		tab->addTab(_("Paths"));
+		_pathsTabId = tab->addTab(_("Paths"));
 	else
-		tab->addTab(_c("Paths", "lowres"));
+		_pathsTabId = tab->addTab(_c("Paths", "lowres"));
 
 #if !( defined(__DC__) || defined(__GP32__) )
 	// These two buttons have to be extra wide, or the text will be
@@ -1177,6 +1375,41 @@ void GlobalOptionsDialog::handleCommand(CommandSender *sender, uint32 cmd, uint3
 	default:
 		OptionsDialog::handleCommand(sender, cmd, data);
 	}
+}
+
+void GlobalOptionsDialog::reflowLayout() {
+	int activeTab = _tabWidget->getActiveTab();
+
+	if (_midiTabId != -1) {
+		_tabWidget->setActiveTab(_midiTabId);
+/* Residual do not use it
+		_tabWidget->removeWidget(_soundFontClearButton);
+		_soundFontClearButton->setNext(0);
+		delete _soundFontClearButton;
+		_soundFontClearButton = addClearButton(_tabWidget, "GlobalOptions_MIDI.mcFontClearButton", kClearSoundFontCmd);*/
+	}
+
+	if (_pathsTabId != -1) {
+		_tabWidget->setActiveTab(_pathsTabId);
+
+		_tabWidget->removeWidget(_savePathClearButton);
+		_savePathClearButton->setNext(0);
+		delete _savePathClearButton;
+		_savePathClearButton = addClearButton(_tabWidget, "GlobalOptions_Paths.SavePathClearButton", kSavePathClearCmd);
+
+		_tabWidget->removeWidget(_themePathClearButton);
+		_themePathClearButton->setNext(0);
+		delete _themePathClearButton;
+		_themePathClearButton = addClearButton(_tabWidget, "GlobalOptions_Paths.ThemePathClearButton", kThemePathClearCmd);
+
+		_tabWidget->removeWidget(_extraPathClearButton);
+		_extraPathClearButton->setNext(0);
+		delete _extraPathClearButton;
+		_extraPathClearButton = addClearButton(_tabWidget, "GlobalOptions_Paths.ExtraPathClearButton", kExtraPathClearCmd);
+	}
+
+	_tabWidget->setActiveTab(activeTab);
+	OptionsDialog::reflowLayout();
 }
 
 } // End of namespace GUI

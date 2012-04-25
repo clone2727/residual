@@ -48,14 +48,18 @@ MoviePlayer::MoviePlayer() {
 	_videoDecoder = NULL;
 	_internalSurface = NULL;
 	_externalSurface = new Graphics::Surface();
-
-	g_system->getTimerManager()->installTimerProc(&timerCallback, 10000, NULL, "movieLoop");
+	_timerStarted = false;
 }
 
 MoviePlayer::~MoviePlayer() {
+	// Remove the callback immediately, so we're sure timerCallback() doesn't get called
+	// after the deinit() or the deletes.
+	if (_timerStarted)
+		g_system->getTimerManager()->removeTimerProc(&timerCallback);
+
 	deinit();
 	delete _videoDecoder;
-	g_system->getTimerManager()->removeTimerProc(&timerCallback);
+	delete _externalSurface;
 }
 
 void MoviePlayer::pause(bool p) {
@@ -70,10 +74,11 @@ void MoviePlayer::stop() {
 	g_grim->setMode(GrimEngine::NormalMode);
 }
 
-void MoviePlayer::timerCallback(void *) {
-	Common::StackLock lock(g_movie->_frameMutex);
-	if (g_movie->prepareFrame())
-		g_movie->postHandleFrame();
+void MoviePlayer::timerCallback(void *instance) {
+	MoviePlayer *movie = static_cast<MoviePlayer *>(instance);
+	Common::StackLock lock(movie->_frameMutex);
+	if (movie->prepareFrame())
+		movie->postHandleFrame();
 }
 
 bool MoviePlayer::prepareFrame() {
@@ -85,7 +90,9 @@ bool MoviePlayer::prepareFrame() {
 		return false;
 
 	if (_videoFinished) {
-		g_grim->setMode(GrimEngine::NormalMode);
+		if (g_grim->getMode() == GrimEngine::SmushMode) {
+			g_grim->setMode(GrimEngine::NormalMode);
+		}
 		_videoPause = true;
 		return false;
 	}
@@ -114,6 +121,11 @@ Graphics::Surface *MoviePlayer::getDstSurface() {
 }
 
 void MoviePlayer::init() {
+	if (!_timerStarted) {
+		g_system->getTimerManager()->installTimerProc(&timerCallback, 10000, this, "movieLoop");
+		_timerStarted = true;
+	}
+
 	_frame = -1;
 	_movieTime = 0;
 	_updateNeeded = false;
@@ -152,7 +164,7 @@ bool MoviePlayer::play(Common::String filename, bool looping, int x, int y) {
 	_internalSurface = NULL;
 
 	// Get the first frame immediately
-	timerCallback(0);
+	timerCallback(this);
 
 	return true;
 }
@@ -168,8 +180,8 @@ void MoviePlayer::saveState(SaveGame *state) {
 
 	state->writeLESint32(_frame);
 	state->writeFloat(_movieTime);
-	state->writeLESint32(_videoFinished);
-	state->writeLESint32(_videoLooping);
+	state->writeBool(_videoFinished);
+	state->writeBool(_videoLooping);
 
 	state->writeLESint32(_x);
 	state->writeLESint32(_y);
@@ -184,8 +196,8 @@ void MoviePlayer::restoreState(SaveGame *state) {
 
 	int32 frame = state->readLESint32();
 	float movieTime = state->readFloat();
-	bool videoFinished = state->readLESint32();
-	bool videoLooping = state->readLESint32();
+	bool videoFinished = state->readBool();
+	bool videoLooping = state->readBool();
 
 	int x = state->readLESint32();
 	int y = state->readLESint32();
@@ -199,11 +211,11 @@ void MoviePlayer::restoreState(SaveGame *state) {
 	state->endSection();
 }
 
-#if !defined(USE_MPEG2) || !defined(USE_SMUSH) || !defined(USE_BINK)
+#if !defined(USE_MPEG2) || !defined(USE_BINK)
 #define NEED_NULLPLAYER
 #endif
 
-// Fallback for when USE_MPEG2 / USE_BINK / USE_SMUSH isnt defined
+// Fallback for when USE_MPEG2 / USE_BINK isnt defined
 
 #ifdef NEED_NULLPLAYER
 class NullPlayer : public MoviePlayer {
@@ -231,12 +243,6 @@ private:
 #ifndef USE_MPEG2
 MoviePlayer *CreateMpegPlayer() {
 	return new NullPlayer("MPEG2");
-}
-#endif
-
-#ifndef USE_SMUSH
-MoviePlayer *CreateSmushPlayer(bool demo) {
-	return new NullPlayer("SMUSH");
 }
 #endif
 

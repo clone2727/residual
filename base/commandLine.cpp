@@ -33,9 +33,10 @@
 #include "base/version.h"
 
 #include "common/config-manager.h"
+#include "common/fs.h"
+#include "common/rendermode.h"
 #include "common/system.h"
 #include "common/textconsole.h"
-#include "common/fs.h"
 
 #include "gui/ThemeEngine.h"
 
@@ -67,30 +68,41 @@ static const char HELP_STRING[] =
 	"  -z, --list-games         Display list of supported games and exit\n"
 	"  -t, --list-targets       Display list of configured targets and exit\n"
 	"  --list-saves=TARGET      Display a list of savegames for the game (TARGET) specified\n"
-#if defined (WIN32) && !defined(_WIN32_WCE) && !defined(__SYMBIAN32__)
+#if defined(WIN32) && !defined(_WIN32_WCE) && !defined(__SYMBIAN32__)
 	"  --console                Enable the console window (default:enabled)\n"
 #endif
 	"\n"
 	"  -c, --config=CONFIG      Use alternate configuration file\n"
 	"  -p, --path=PATH          Path to where the game is installed\n"
+	"  -x, --save-slot[=NUM]    Save game slot to load (default: autosave)\n"
 	"  -f, --fullscreen         Force full-screen mode\n"
 	"  -F, --no-fullscreen      Force windowed mode\n"
 	"  --gui-theme=THEME        Select GUI theme\n"
 	"  --themepath=PATH         Path to where GUI themes are stored\n"
 	"  --list-themes            Display list of all usable GUI themes\n"
 	"  -e, --music-driver=MODE  Select music driver (see README for details)\n"
+	"  --list-audio-devices     List all available audio devices\n"
 	"  -q, --language=LANG      Select language (en,de,fr,it,pt,es,jp,zh,kr,se,gb,\n"
 	"                           hb,ru,cz)\n"
-	"  -m, --music-volume=NUM   Set the music volume, 0-127 (default: 127)\n"
-	"  -s, --sfx-volume=NUM     Set the sfx volume, 0-127 (default: 127)\n"
-	"  -r, --speech-volume=NUM  Set the speech volume, 0-127 (default: 127)\n"
-	"  --speech-mode=NUM        Set the mode of speech 1-Text only, 2-Speech Only, 3-Speech and Text\n"
+	"  -m, --music-volume=NUM   Set the music volume, 0-255 (default: 192)\n"
+	"  -s, --sfx-volume=NUM     Set the sfx volume, 0-255 (default: 192)\n"
+	"  -r, --speech-volume=NUM  Set the speech volume, 0-255 (default: 192)\n"
 	"  --midi-gain=NUM          Set the gain for MIDI playback, 0-1000 (default:\n"
 	"                           100) (only supported by some MIDI drivers)\n"
+	"  -n, --subtitles          Enable subtitles (use with games that have voice)\n"
+	"  -b, --boot-param=NUM     Pass number to the boot script (boot param)\n"
 	"  -d, --debuglevel=NUM     Set debug verbosity level\n"
 	"  --debugflags=FLAGS       Enable engine specific debug flags\n"
 	"                           (separated by commas)\n"
+	"  -u, --dump-scripts       Enable script dumping if a directory called 'dumps'\n"
+	"                           exists in the current directory\n"
 	"\n"
+	"  --cdrom=NUM              CD drive to play CD audio from (default: 0 = first\n"
+	"                           drive)\n"
+	"  --joystick[=NUM]         Enable joystick input (default: 0 = first joystick)\n"
+	"  --platform=WORD          Specify platform of game (allowed values: 2gs, 3do,\n"
+	"                           acorn, amiga, atari, c64, fmtowns, nes, mac, pc, pc98,\n"
+	"                           pce, segacd, wii, windows)\n"
 	"  --savepath=PATH          Path to where savegames are stored\n"
 	"  --extrapath=PATH         Extra path to additional game data\n"
 	"  --soundfont=FILE         Select the SoundFont for MIDI playback (only\n"
@@ -100,11 +112,16 @@ static const char HELP_STRING[] =
 	"  --enable-gs              Enable Roland GS mode for MIDI playback\n"
 	"  --output-rate=RATE       Select output sample rate in Hz (e.g. 22050)\n"
 	"  --opl-driver=DRIVER      Select AdLib (OPL) emulator (db, mame)\n"
-	"  --show-fps=BOOL          Set the turn on/off display FPS info: true/false\n"
-	"  --soft-renderer=BOOL     Set the turn on/off software 3D renderer: true/false\n"
+	"  --talkspeed=NUM          Set talk speed for games (default: 179)\n"
+	"  --show-fps               Set the turn on display FPS info\n"
+	"  --no-show-fps            Set the turn off display FPS info\n"
+	"  --soft-renderer          Switch to 3D software renderer\n"
+	"  --no-soft-renderer       Switch to 3D hardware renderer\n"
 	"\n"
+#ifdef ENABLE_GRIM
 	"  --dimuse-tempo=NUM       Set internal Digital iMuse tempo (10 - 100) per second\n"
 	"                           (default: 10)\n"
+#endif
 ;
 #endif
 
@@ -120,7 +137,7 @@ static void usage(const char *s, ...) {
 	vsnprintf(buf, STRINGBUFLEN, s, va);
 	va_end(va);
 
-#if !(defined(__GP32__) || defined (__SYMBIAN32__) || defined(__DS__))
+#if !(defined(__GP32__) || defined(__SYMBIAN32__) || defined(__DS__))
 	printf(USAGE_STRING, s_appName, buf, s_appName, s_appName);
 #endif
 	exit(1);
@@ -133,14 +150,19 @@ void registerDefaults() {
 
 	// Graphics
 	ConfMan.registerDefault("fullscreen", false);
-	ConfMan.registerDefault("soft_renderer", "false");
-	ConfMan.registerDefault("show_fps", "false");
+	ConfMan.registerDefault("soft_renderer", false);
+	ConfMan.registerDefault("show_fps", false);
 
 	// Sound & Music
-	ConfMan.registerDefault("music_volume", 127);
-	ConfMan.registerDefault("sfx_volume", 127);
-	ConfMan.registerDefault("speech_volume", 127);
-	ConfMan.registerDefault("speech_mode", "3");
+	ConfMan.registerDefault("music_volume", 192);
+	ConfMan.registerDefault("sfx_volume", 192);
+	ConfMan.registerDefault("speech_volume", 192);
+
+	ConfMan.registerDefault("music_mute", false);
+	ConfMan.registerDefault("sfx_mute", false);
+	ConfMan.registerDefault("speech_mute", false);
+	ConfMan.registerDefault("mute", false);
+
 	ConfMan.registerDefault("multi_midi", false);
 	ConfMan.registerDefault("native_mt32", false);
 	ConfMan.registerDefault("enable_gs", false);
@@ -158,10 +180,17 @@ void registerDefaults() {
 	ConfMan.registerDefault("path", "");
 	ConfMan.registerDefault("platform", Common::kPlatformPC);
 	ConfMan.registerDefault("language", "en");
+	ConfMan.registerDefault("subtitles", false);
+	ConfMan.registerDefault("boot_param", 0);
+	ConfMan.registerDefault("dump_scripts", false);
 	ConfMan.registerDefault("save_slot", -1);
 	ConfMan.registerDefault("autosave_period", 5 * 60);	// By default, trigger autosave every 5 minutes
 
+	ConfMan.registerDefault("talkspeed", 179);
+
+#ifdef ENABLE_GRIM
 	ConfMan.registerDefault("dimuse_tempo", 10);
+#endif
 
 	// Miscellaneous
 	ConfMan.registerDefault("joystick_num", -1);
@@ -212,12 +241,12 @@ void registerDefaults() {
 // Use this for boolean options; this distinguishes between "-x" and "-X",
 // resp. between "--some-option" and "--no-some-option".
 #define DO_OPTION_BOOL(shortCmd, longCmd) \
-	if (isLongCmd ? (!strcmp(s+2, longCmd) || !strcmp(s+2, "no-"longCmd)) : (tolower(s[1]) == shortCmd)) { \
-		bool boolValue = (islower(static_cast<unsigned char>(s[1])) != 0); \
+	if (isLongCmd ? (!strcmp(s+2, longCmd) || !strcmp(s+2, "no-" longCmd)) : (tolower(s[1]) == shortCmd)) { \
+		bool boolValue = (Common::isLower(s[1]) != 0); \
 		s += 2; \
 		if (isLongCmd) { \
 			boolValue = !strcmp(s, longCmd); \
-			s += boolValue ? (sizeof(longCmd) - 1) : (sizeof("no-"longCmd) - 1); \
+			s += boolValue ? (sizeof(longCmd) - 1) : (sizeof("no-" longCmd) - 1); \
 		} \
 		if (*s != '\0') goto unknownOption; \
 		const char *option = boolValue ? "true" : "false"; \
@@ -308,6 +337,9 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 			DO_OPTION('c', "config")
 			END_OPTION
 
+			DO_OPTION_INT('b', "boot-param")
+			END_OPTION
+
 			DO_OPTION_OPT('d', "debuglevel", "0")
 			END_OPTION
 
@@ -315,6 +347,9 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 			END_OPTION
 
 			DO_OPTION('e', "music-driver")
+			END_OPTION
+
+			DO_LONG_COMMAND("list-audio-devices")
 			END_OPTION
 
 			DO_LONG_OPTION_INT("output-rate")
@@ -327,6 +362,9 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 			END_OPTION
 
 			DO_OPTION_INT('m', "music-volume")
+			END_OPTION
+
+			DO_OPTION_BOOL('n', "subtitles")
 			END_OPTION
 
 			DO_OPTION('p', "path")
@@ -350,6 +388,12 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 			END_OPTION
 
 			DO_LONG_OPTION_INT("midi-gain")
+			END_OPTION
+
+			DO_OPTION_BOOL('u', "dump-scripts")
+			END_OPTION
+
+			DO_OPTION_OPT('x', "save-slot", "0")
 			END_OPTION
 
 			DO_LONG_OPTION_INT("cdrom")
@@ -396,10 +440,10 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 			DO_LONG_OPTION("gamma")
 			END_OPTION
 
-			DO_LONG_OPTION("soft-renderer")
+			DO_LONG_OPTION_BOOL("soft-renderer")
 			END_OPTION
 
-			DO_LONG_OPTION("show-fps")
+			DO_LONG_OPTION_BOOL("show-fps")
 			END_OPTION
 
 			DO_LONG_OPTION("savepath")
@@ -420,6 +464,9 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 				}
 			END_OPTION
 
+			DO_LONG_OPTION_INT("talkspeed")
+			END_OPTION
+
 			DO_LONG_OPTION("gui-theme")
 			END_OPTION
 
@@ -438,11 +485,10 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 			DO_LONG_OPTION("target-md5")
 			END_OPTION
 
-			DO_LONG_OPTION("text-speed")
-			END_OPTION
-
+#ifdef ENABLE_GRIM
 			DO_LONG_OPTION_INT("dimuse-tempo")
 			END_OPTION
+#endif
 
 
 			DO_LONG_OPTION("speech-mode")
@@ -466,7 +512,7 @@ Common::String parseCommandLine(Common::StringMap &settings, int argc, const cha
 			END_OPTION
 #endif
 
-#if defined (WIN32) && !defined(_WIN32_WCE) && !defined(__SYMBIAN32__)
+#if defined(WIN32) && !defined(_WIN32_WCE) && !defined(__SYMBIAN32__)
 			// Optional console window on Windows (default: enabled)
 			DO_LONG_OPTION_BOOL("console")
 			END_OPTION
@@ -841,8 +887,8 @@ bool processSettings(Common::String &command, Common::StringMap &settings, Commo
 		listAudioDevices();
 		return true;
 	} else if (command == "version") {
-		printf("%s\n", gResidualVMFullVersion);
-		printf("Features compiled in: %s\n", gResidualVMFeatures);
+		printf("%s\n", gScummVMFullVersion);
+		printf("Features compiled in: %s\n", gScummVMFeatures);
 		return true;
 	} else if (command == "help") {
 		printf(HELP_STRING, s_appName);

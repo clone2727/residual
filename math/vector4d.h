@@ -44,7 +44,7 @@ public:
 	float z() const { return value(2); }
 	float& w() { return value(3); }
 	float w() const { return value(3); }
-	
+
 	Matrix();
 	Matrix(float lx, float ly, float lz, float lw);
 	Matrix(const MatrixBase<4, 1> &m);
@@ -52,10 +52,6 @@ public:
 
 	void set(float lx, float ly, float lz, float lw);
 
-	inline float scalarProduct(const Vector4d b) const {
-		return x()*b.x() + y()*b.y() + z()*b.z() + w()*b.w();
-	}
-	
 	inline static Vector4d get_vector4d(const char *data) {
 		return Vector4d(get_float(data), get_float(data + 4), get_float(data + 8), get_float(data + 12));
 	}

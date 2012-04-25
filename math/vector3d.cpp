@@ -21,7 +21,6 @@
  */
 
 #include "common/streamdebug.h"
-
 #include "math/vector3d.h"
 
 namespace Math {
@@ -56,4 +55,4 @@ Angle Vector3d::unitCircleAngle() const {
 	return Angle::arcTangent2(y(), x());
 }
 
-}
+} // end of namespace Math

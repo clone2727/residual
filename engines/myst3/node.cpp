@@ -24,6 +24,7 @@
 #include "engines/myst3/menu.h"
 #include "engines/myst3/myst3.h"
 #include "engines/myst3/state.h"
+#include "engines/myst3/subtitles.h"
 
 #include "common/debug.h"
 #include "common/rect.h"
@@ -32,7 +33,7 @@
 
 namespace Myst3 {
 
-void Face::setTextureFromJPEG(Graphics::JPEG *jpeg) {
+void Face::setTextureFromJPEG(Graphics::JPEGDecoder *jpeg) {
 	_bitmap = new Graphics::Surface();
 	_bitmap->create(jpeg->getComponent(1)->w, jpeg->getComponent(1)->h, Graphics::PixelFormat(3, 8, 8, 8, 0, 16, 8, 0, 0));
 
@@ -76,18 +77,25 @@ Face::~Face() {
 }
 
 Node::Node(Myst3Engine *vm, uint16 id) :
-	_vm(vm) {
+	_vm(vm),
+	_subtitles(0) {
 	for (uint i = 0; i < 6; i++)
 		_faces[i] = 0;
 }
 
 void Node::dumpFaceMask(uint16 index, int face) {
-	byte *mask = new byte[640 * 640];
-	memset(mask, 0, sizeof(mask));
+	static const int32 kMaskSize = 640 * 640;
+
+	byte *mask = new byte[kMaskSize];
+	memset(mask, 0, kMaskSize);
 	uint32 headerOffset = 0;
 	uint32 dataOffset = 0;
 
 	const DirectorySubEntry *maskDesc = _vm->getFileDescription(0, index, face, DirectorySubEntry::kFaceMask);
+
+	if (!maskDesc)
+		return;
+
 	Common::MemoryReadStream *maskStream = maskDesc->getData();
 
 	while (headerOffset < 400) {
@@ -120,7 +128,7 @@ void Node::dumpFaceMask(uint16 index, int face) {
 
 	Common::DumpFile outFile;
 	outFile.open("dump/1-1.masku");
-	outFile.write(mask, sizeof(mask));
+	outFile.write(mask, kMaskSize);
 	outFile.close();
 	delete[] mask;
 }
@@ -134,6 +142,8 @@ Node::~Node() {
 	for (int i = 0; i < 6; i++) {
 		delete _faces[i];
 	}
+
+	delete _subtitles;
 }
 
 void Node::loadSpotItem(uint16 id, uint16 condition, bool fade) {
@@ -158,9 +168,10 @@ void Node::loadSpotItem(uint16 id, uint16 condition, bool fade) {
 
 		Common::MemoryReadStream *jpegStream = jpegDesc->getData();
 
-		Graphics::JPEG jpeg;
-		jpeg.read(jpegStream);
-
+		Graphics::JPEGDecoder jpeg;
+		if (!jpeg.loadStream(*jpegStream))
+			error("Could not decode Myst III JPEG");
+		
 		spotItemFace->loadData(&jpeg);
 
 		delete jpegStream;
@@ -187,6 +198,25 @@ void Node::loadMenuSpotItem(uint16 id, uint16 condition, const Common::Rect &rec
 	spotItem->addFace(spotItemFace);
 
 	_spotItems.push_back(spotItem);
+}
+
+void Node::loadSubtitles(uint32 id) {
+	_subtitles = Subtitles::create(_vm, id);
+}
+
+bool Node::hasSubtitlesToDraw() {
+	if (!_subtitles)
+		return false;
+
+	return _vm->_state->getSpotSubtitle() > 0;
+}
+
+void Node::drawOverlay() {
+	if (hasSubtitlesToDraw()) {
+		uint subId = _vm->_state->getSpotSubtitle();
+		_subtitles->setFrame(15 * subId + 1);
+		_subtitles->drawOverlay();
+	}
 }
 
 void Node::update() {
@@ -271,7 +301,7 @@ void SpotItemFace::initBlack(uint16 width, uint16 height) {
 	initNotDrawn(width, height);
 }
 
-void SpotItemFace::loadData(Graphics::JPEG *jpeg) {
+void SpotItemFace::loadData(Graphics::JPEGDecoder *jpeg) {
 	// Convert active SpotItem image to raw data
 	_bitmap = new Graphics::Surface();
 	_bitmap->create(jpeg->getComponent(1)->w, jpeg->getComponent(1)->h, Graphics::PixelFormat(3, 8, 8, 8, 0, 16, 8, 0, 0));
@@ -364,43 +394,6 @@ void SpotItemFace::fadeDraw() {
 
 	_drawn = true;
 	_face->markTextureDirty();
-}
-
-void Node::addSunSpot(const SunSpot &sunspot) {
-	SunSpot *sunSpot = new SunSpot(sunspot);
-	_sunspots.push_back(sunSpot);
-}
-
-SunSpot Node::computeSunspotsIntensity(float pitch, float heading) {
-	SunSpot result;
-	result.intensity = -1;
-	result.color = 0;
-	result.radius = 0;
-
-	for (uint i = 0; i < _sunspots.size(); i++) {
-		SunSpot *s = _sunspots[i];
-
-		uint32 value = _vm->_state->getVar(s->var);
-
-		// Skip disabled items
-		if (value == 0) continue;
-
-		float distance = _vm->_scene->distanceToZone(s->heading, s->pitch, s->radius, heading, pitch);
-
-		if (distance > result.radius) {
-			result.radius = distance;
-			result.color = s->color;
-			result.intensity = s->intensity;
-
-			if (s->variableIntensity) {
-				result.radius = value * distance / 100;
-			}
-		}
-	}
-
-
-
-	return result;
 }
 
 } // end of namespace Myst3

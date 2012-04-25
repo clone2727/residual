@@ -33,7 +33,6 @@
 #include "engines/grim/debug.h"
 #include "engines/grim/actor.h"
 #include "engines/grim/grim.h"
-#include "engines/grim/colormap.h"
 #include "engines/grim/costume.h"
 #include "engines/grim/lipsync.h"
 #include "engines/grim/movie/movie.h"
@@ -45,13 +44,27 @@
 #include "engines/grim/gfx_base.h"
 #include "engines/grim/model.h"
 
+#include "engines/grim/emi/costumeemi.h"
+#include "engines/grim/emi/skeleton.h"
+#include "engines/grim/emi/costume/emiskel_component.h"
+
 #include "common/foreach.h"
 
 namespace Grim {
 
+bool Actor::_isTalkingBackground = false;
+
+void Actor::saveStaticState(SaveGame *state) {
+	state->writeBool(_isTalkingBackground);
+}
+
+void Actor::restoreStaticState(SaveGame *state) {
+	_isTalkingBackground = state->readBool();
+}
+
 Actor::Actor(const Common::String &actorName) :
-		PoolObject<Actor, MKTAG('A', 'C', 'T', 'R')>(), _name(actorName), _setName(""),
-		_talkColor(PoolColor::getPool().getObject(2)), _pos(0, 0, 0),
+		_name(actorName), _setName(""),
+		_talkColor(255, 255, 255), _pos(0, 0, 0),
 		// Some actors don't set walk and turn rates, so we default the
 		// _turnRate so Doug at the cat races can turn and we set the
 		// _walkRate so Glottis at the demon beaver entrance can walk and
@@ -61,13 +74,14 @@ Actor::Actor(const Common::String &actorName) :
 		_visible(true), _lipSync(NULL), _turning(false), _walking(false),
 		_walkedLast(false), _walkedCur(false),
 		_lastTurnDir(0), _currTurnDir(0),
-		_sayLineText(0) {
+		_sayLineText(0), _talkDelay(0),
+		_attachedActor(NULL), _attachedJoint(""),
+		_globalAlpha(1.f), _alphaMode(AlphaOff)  {
 	_lookingMode = false;
 	_constrain = false;
 	_talkSoundName = "";
 	_activeShadowSlot = -1;
 	_shadowArray = new Shadow[5];
-	_toClean = false;
 	_running = false;
 	_scale = 1.f;
 	_timeScale = 1.f;
@@ -75,31 +89,35 @@ Actor::Actor(const Common::String &actorName) :
 	_collisionMode = CollisionOff;
 	_collisionScale = 1.f;
 	_puckOrient = false;
+	_talking = false;
+	_inOverworld = false;
 
-	for (int i = 0; i < 5; i++) {
+	for (int i = 0; i < MAX_SHADOWS; i++) {
 		_shadowArray[i].active = false;
 		_shadowArray[i].dontNegate = false;
 		_shadowArray[i].shadowMask = NULL;
 		_shadowArray[i].shadowMaskSize = 0;
 	}
-			
-	if (g_sound == NULL)
-		g_sound = new SoundPlayer();
 }
 
-Actor::Actor() :
-	PoolObject<Actor, MKTAG('A', 'C', 'T', 'R')>() {
+Actor::Actor() {
 
 	_shadowArray = new Shadow[5];
-	_toClean = false;
 	_running = false;
 	_scale = 1.f;
 	_timeScale = 1.f;
 	_mustPlaceText = false;
 	_collisionMode = CollisionOff;
 	_collisionScale = 1.f;
+	_inOverworld = false;
 
-	for (int i = 0; i < 5; i++) {
+	_attachedActor = NULL;
+	_attachedJoint = "";
+
+	_alphaMode = AlphaOff;
+	_globalAlpha = 1.f;
+
+	for (int i = 0; i < MAX_SHADOWS; i++) {
 		_shadowArray[i].active = false;
 		_shadowArray[i].dontNegate = false;
 		_shadowArray[i].shadowMask = NULL;
@@ -124,11 +142,7 @@ void Actor::saveState(SaveGame *savedState) const {
 	savedState->writeString(_name);
 	savedState->writeString(_setName);
 
-	if (_talkColor) {
-		savedState->writeLEUint32(_talkColor->getId());
-	} else {
-		savedState->writeLEUint32(0);
-	}
+	savedState->writeColor(_talkColor);
 
 	savedState->writeVector3d(_pos);
 
@@ -137,27 +151,29 @@ void Actor::saveState(SaveGame *savedState) const {
 	savedState->writeFloat(_roll.getDegrees());
 	savedState->writeFloat(_walkRate);
 	savedState->writeFloat(_turnRate);
-	savedState->writeLESint32(_constrain);
+	savedState->writeBool(_constrain);
 	savedState->writeFloat(_reflectionAngle);
-	savedState->writeLESint32(_visible);
-	savedState->writeLESint32(_lookingMode),
+	savedState->writeBool(_visible);
+	savedState->writeBool(_lookingMode),
 	savedState->writeFloat(_scale);
 	savedState->writeFloat(_timeScale);
-	savedState->writeLEBool(_puckOrient);
+	savedState->writeBool(_puckOrient);
 
 	savedState->writeString(_talkSoundName);
+	savedState->writeBool(_talking);
+	savedState->writeBool(_backgroundTalk);
 
 	savedState->writeLEUint32((uint32)_collisionMode);
 	savedState->writeFloat(_collisionScale);
 
 	if (_lipSync) {
-		savedState->writeLEUint32(1);
+		savedState->writeBool(true);
 		savedState->writeString(_lipSync->getFilename());
 	} else {
-		savedState->writeLEUint32(0);
+		savedState->writeBool(false);
 	}
 
-	savedState->writeLESint32(_costumeStack.size());
+	savedState->writeLEUint32(_costumeStack.size());
 	for (Common::List<Costume *>::const_iterator i = _costumeStack.begin(); i != _costumeStack.end(); ++i) {
 		Costume *c = *i;
 		savedState->writeString(c->getFilename());
@@ -167,7 +183,7 @@ void Actor::saveState(SaveGame *savedState) const {
 			++depth;
 			pc = pc->getPreviousCostume();
 		}
-		savedState->writeLEUint32(depth);
+		savedState->writeLESint32(depth);
 		pc = c->getPreviousCostume();
 		for (int j = 0; j < depth; ++j) { //save the previousCostume hierarchy
 			savedState->writeString(pc->getFilename());
@@ -176,17 +192,17 @@ void Actor::saveState(SaveGame *savedState) const {
 		c->saveState(savedState);
 	}
 
-	savedState->writeLESint32(_turning);
-	savedState->writeFloat(_destYaw.getDegrees());
+	savedState->writeBool(_turning);
+	savedState->writeFloat(_moveYaw.getDegrees());
 
-	savedState->writeLESint32(_walking);
+	savedState->writeBool(_walking);
 	savedState->writeVector3d(_destPos);
 
 	_restChore.saveState(savedState);
 
 	_walkChore.saveState(savedState);
-	savedState->writeLESint32(_walkedLast);
-	savedState->writeLESint32(_walkedCur);
+	savedState->writeBool(_walkedLast);
+	savedState->writeBool(_walkedCur);
 
 	_leftTurnChore.saveState(savedState);
 	_rightTurnChore.saveState(savedState);
@@ -200,13 +216,13 @@ void Actor::saveState(SaveGame *savedState) const {
 
 	_mumbleChore.saveState(savedState);
 
-	for (int i = 0; i < 5; ++i) {
+	for (int i = 0; i < MAX_SHADOWS; ++i) {
 		Shadow &shadow = _shadowArray[i];
 		savedState->writeString(shadow.name);
 
 		savedState->writeVector3d(shadow.pos);
 
-		savedState->writeLESint32(shadow.planeList.size());
+		savedState->writeLEUint32(shadow.planeList.size());
 		// Cannot use g_grim->getCurrSet() here because an actor can have walk planes
 		// from other scenes. It happens e.g. when Membrillo calls Velasco to tell him
 		// Naranja is dead.
@@ -218,18 +234,16 @@ void Actor::saveState(SaveGame *savedState) const {
 
 		savedState->writeLESint32(shadow.shadowMaskSize);
 		savedState->write(shadow.shadowMask, shadow.shadowMaskSize);
-		savedState->writeLESint32(shadow.active);
-		savedState->writeLESint32(shadow.dontNegate);
+		savedState->writeBool(shadow.active);
+		savedState->writeBool(shadow.dontNegate);
 	}
 	savedState->writeLESint32(_activeShadowSlot);
 
-	savedState->writeLEUint32(_sayLineText);
+	savedState->writeLESint32(_sayLineText);
 
 	savedState->writeVector3d(_lookAtVector);
-	// FIXME Remove this!!
-	savedState->writeFloat(0);
 
-	savedState->writeLESint32(_path.size());
+	savedState->writeLEUint32(_path.size());
 	for (Common::List<Math::Vector3d>::const_iterator i = _path.begin(); i != _path.end(); ++i) {
 		savedState->writeVector3d(*i);
 	}
@@ -245,7 +259,7 @@ bool Actor::restoreState(SaveGame *savedState) {
 	_name = savedState->readString();
 	_setName = savedState->readString();
 
-	_talkColor = PoolColor::getPool().getObject(savedState->readLEUint32());
+	_talkColor = savedState->readColor();
 
 	_pos                = savedState->readVector3d();
 	_pitch              = savedState->readFloat();
@@ -253,30 +267,35 @@ bool Actor::restoreState(SaveGame *savedState) {
 	_roll               = savedState->readFloat();
 	_walkRate           = savedState->readFloat();
 	_turnRate           = savedState->readFloat();
-	_constrain          = savedState->readLESint32();
+	_constrain          = savedState->readBool();
 	_reflectionAngle    = savedState->readFloat();
-	_visible            = savedState->readLESint32();
-	_lookingMode        = savedState->readLESint32();
+	_visible            = savedState->readBool();
+	_lookingMode        = savedState->readBool();
 	_scale              = savedState->readFloat();
 	_timeScale          = savedState->readFloat();
-	_puckOrient         = savedState->readLEBool();
+	_puckOrient         = savedState->readBool();
 
 	_talkSoundName 		= savedState->readString();
+	_talking = savedState->readBool();
+	_backgroundTalk = savedState->readBool();
+	if (isTalking()) {
+		g_grim->addTalkingActor(this);
+	}
 
 	_collisionMode      = (CollisionMode)savedState->readLEUint32();
 	_collisionScale     = savedState->readFloat();
 
-	if (savedState->readLEUint32()) {
+	if (savedState->readBool()) {
 		Common::String fn = savedState->readString();
 		_lipSync = g_resourceloader->getLipSync(fn);
 	} else {
 		_lipSync = NULL;
 	}
 
-	int32 size = savedState->readLESint32();
-	for (int32 i = 0; i < size; ++i) {
+	uint32 size = savedState->readLEUint32();
+	for (uint32 i = 0; i < size; ++i) {
 		Common::String fname = savedState->readString();
-		const int depth = savedState->readLEUint32();
+		const int depth = savedState->readLESint32();
 		Costume *pc = NULL;
 		if (depth > 0) {	//build all the previousCostume hierarchy
 			Common::String *names = new Common::String[depth];
@@ -297,17 +316,17 @@ bool Actor::restoreState(SaveGame *savedState) {
 		_costumeStack.push_back(c);
 	}
 
-	_turning = savedState->readLESint32();
-	_destYaw = savedState->readFloat();
+	_turning = savedState->readBool();
+	_moveYaw = savedState->readFloat();
 
-	_walking = savedState->readLESint32();
+	_walking = savedState->readBool();
 	_destPos = savedState->readVector3d();
 
 	_restChore.restoreState(savedState, this);
 
 	_walkChore.restoreState(savedState, this);
-	_walkedLast = savedState->readLESint32();
-	_walkedCur = savedState->readLESint32();
+	_walkedLast = savedState->readBool();
+	_walkedCur = savedState->readBool();
 
 	_leftTurnChore.restoreState(savedState, this);
 	_rightTurnChore.restoreState(savedState, this);
@@ -322,15 +341,15 @@ bool Actor::restoreState(SaveGame *savedState) {
 	_mumbleChore.restoreState(savedState, this);
 
 	clearShadowPlanes();
-	for (int i = 0; i < 5; ++i) {
+	for (int i = 0; i < MAX_SHADOWS; ++i) {
 		Shadow &shadow = _shadowArray[i];
 		shadow.name = savedState->readString();
 
 		shadow.pos = savedState->readVector3d();
 
-		size = savedState->readLESint32();
+		size = savedState->readLEUint32();
 		Set *scene = NULL;
-		for (int j = 0; j < size; ++j) {
+		for (uint32 j = 0; j < size; ++j) {
 			Common::String setName = savedState->readString();
 			Common::String secName = savedState->readString();
 			if (!scene || scene->getName() != setName) {
@@ -351,19 +370,17 @@ bool Actor::restoreState(SaveGame *savedState) {
 		} else {
 			shadow.shadowMask = NULL;
 		}
-		shadow.active = savedState->readLESint32();
-		shadow.dontNegate = savedState->readLESint32();
+		shadow.active = savedState->readBool();
+		shadow.dontNegate = savedState->readBool();
 	}
 	_activeShadowSlot = savedState->readLESint32();
 
-	_sayLineText = savedState->readLEUint32();
+	_sayLineText = savedState->readLESint32();
 
 	_lookAtVector = savedState->readVector3d();
-	// FIXME: Remove this!!
-	savedState->readFloat();
 
-	size = savedState->readLESint32();
-	for (int i = 0; i < size; ++i) {
+	size = savedState->readLEUint32();
+	for (uint32 i = 0; i < size; ++i) {
 		_path.push_back(savedState->readVector3d());
 	}
 
@@ -377,6 +394,7 @@ void Actor::setYaw(const Math::Angle &yawParam) {
 void Actor::setRot(const Math::Angle &pitchParam, const Math::Angle &yawParam, const Math::Angle &rollParam) {
 	_pitch = pitchParam;
 	setYaw(yawParam);
+	_moveYaw = _yaw;
 	_roll = rollParam;
 	_turning = false;
 }
@@ -396,9 +414,9 @@ void Actor::setPos(const Math::Vector3d &position) {
 void Actor::turnTo(const Math::Angle &pitchParam, const Math::Angle &yawParam, const Math::Angle &rollParam) {
 	_pitch = pitchParam;
 	_roll = rollParam;
+	_moveYaw = yawParam;
 	if (_yaw != yawParam) {
 		_turning = true;
-		_destYaw = yawParam;
 	} else
 		_turning = false;
 }
@@ -489,7 +507,8 @@ void Actor::walkTo(const Math::Vector3d &p) {
 					while (!bridges.empty()) {
 						Math::Line3d bridge = bridges.back();
 						Math::Vector3d pos;
-						if (!bridge.intersectLine2d(l, &pos)) {
+						const bool useXZ = (g_grim->getGameType() == GType_MONKEY4);
+						if (!bridge.intersectLine2d(l, &pos, useXZ)) {
 							pos = bridge.middle();
 						}
 						float dist = (pos - closestPoint).getMagnitude();
@@ -586,73 +605,116 @@ void Actor::walkForward() {
 
 	_walking = false;
 
-	Math::Vector3d forwardVec(-_yaw.getSine() * _pitch.getCosine(),
-		_yaw.getCosine() * _pitch.getCosine(), _pitch.getSine());
-
 	if (! _constrain) {
+		Math::Vector3d forwardVec(-_moveYaw.getSine() * _pitch.getCosine(),
+			_moveYaw.getCosine() * _pitch.getCosine(), _pitch.getSine());
+
+		// EMI: Y is up-down, sectors use an X-Z plane for movement
+		if (g_grim->getGameType() == GType_MONKEY4) {
+			float temp = forwardVec.z();
+			forwardVec.z() = forwardVec.y();
+			forwardVec.y() = temp;
+		}
+
 		_pos += forwardVec * dist;
 		_walkedCur = true;
 		return;
 	}
 
+	bool backwards = false;
 	if (dist < 0) {
 		dist = -dist;
-		forwardVec = -forwardVec;
+		backwards = true;
 	}
 
-	Sector *currSector = NULL, *prevSector = NULL;
-	Sector::ExitInfo ei;
+	int tries = 0;
+	while (dist > 0.0f) {
+		Math::Vector3d forwardVec(-_moveYaw.getSine() * _pitch.getCosine(),
+			_moveYaw.getCosine() * _pitch.getCosine(), _pitch.getSine());
 
-	g_grim->getCurrSet()->findClosestSector(_pos, &currSector, &_pos);
-	if (!currSector) { // Shouldn't happen...
-		moveTo(_pos + forwardVec * dist);
-		_walkedCur = true;
-		return;
-	}
+		// EMI: Y is up-down, sectors use an X-Z plane for movement
+		if (g_grim->getGameType() == GType_MONKEY4) {
+			float temp = forwardVec.z();
+			forwardVec.z() = forwardVec.y();
+			forwardVec.y() = temp;
+		}
 
-	while (currSector) {
-		prevSector = currSector;
-		Math::Vector3d puckVec = currSector->getProjectionToPuckVector(forwardVec);
-		puckVec /= puckVec.getMagnitude();
-		currSector->getExitInfo(_pos, puckVec, &ei);
-		float exitDist = (ei.exitPoint - _pos).getMagnitude();
-		if (dist < exitDist) {
-			moveTo(_pos + puckVec * dist);
+		if (backwards)
+			forwardVec = -forwardVec;
+
+		Sector *currSector = NULL, *prevSector = NULL, *startSector = NULL;
+		Sector::ExitInfo ei;
+
+		g_grim->getCurrSet()->findClosestSector(_pos, &currSector, &_pos);
+		if (!currSector) { // Shouldn't happen...
+			moveTo(_pos + forwardVec * dist);
 			_walkedCur = true;
 			return;
 		}
-		_pos = ei.exitPoint;
-		dist -= exitDist;
-		if (exitDist > 0.0001)
-			_walkedCur = true;
+		startSector = currSector;
 
-		// Check for an adjacent sector which can continue
-		// the path
-		currSector = g_grim->getCurrSet()->findPointSector(ei.exitPoint + (float)0.0001 * puckVec, Sector::WalkType);
-		if (currSector == prevSector)
-			break;
+		float oldDist = dist;
+		while (currSector) {
+			prevSector = currSector;
+			Math::Vector3d puckVec = currSector->getProjectionToPuckVector(forwardVec);
+			puckVec /= puckVec.getMagnitude();
+			currSector->getExitInfo(_pos, puckVec, &ei);
+			float exitDist = (ei.exitPoint - _pos).getMagnitude();
+			if (dist < exitDist) {
+				moveTo(_pos + puckVec * dist);
+				_walkedCur = true;
+				return;
+			}
+			_pos = ei.exitPoint;
+			dist -= exitDist;
+			if (exitDist > 0.0001)
+				_walkedCur = true;
+
+			// Check for an adjacent sector which can continue
+			// the path
+			currSector = g_grim->getCurrSet()->findPointSector(ei.exitPoint + (float)0.0001 * puckVec, Sector::WalkType);
+			if (currSector == prevSector || currSector == startSector)
+				break;
+		}
+
+		int turnDir = 1;
+		if (ei.angleWithEdge > 90) {
+			ei.angleWithEdge = 180 - ei.angleWithEdge;
+			ei.edgeDir = -ei.edgeDir;
+			turnDir = -1;
+		}
+		if (ei.angleWithEdge > _reflectionAngle)
+			return;
+
+		ei.angleWithEdge += (float)1.0f;
+		turnTo(0, _moveYaw + ei.angleWithEdge * turnDir, 0);
+
+		if (oldDist <= dist + 0.001f) {
+			// If we didn't move at all, keep trying a couple more times
+			// in case we can move in the new direction.
+			tries++;
+			if (tries > 3)
+				break;
+		}
 	}
+}
 
-	int turnDir = 1;
-	if (ei.angleWithEdge > 90) {
-		ei.angleWithEdge = 180 - ei.angleWithEdge;
-		ei.edgeDir = -ei.edgeDir;
-		turnDir = -1;
+Math::Vector3d Actor::getSimplePuckVector() const {
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		return Math::Vector3d(-_yaw.getSine(), 0, _yaw.getCosine());
+	} else {
+		return Math::Vector3d(-_yaw.getSine(), _yaw.getCosine(), 0);
 	}
-	if (ei.angleWithEdge > _reflectionAngle)
-		return;
-
-	ei.angleWithEdge += (float)0.1;
-	Math::Angle turnAmt = g_grim->getPerSecond(_turnRate) * 5.;
-	if (turnAmt > ei.angleWithEdge)
-		turnAmt = ei.angleWithEdge;
-	setYaw(_yaw + turnAmt * turnDir);
 }
 
 Math::Vector3d Actor::getPuckVector() const {
-	Math::Vector3d forwardVec(-_yaw.getSine(), _yaw.getCosine(), 0);
+	Math::Vector3d forwardVec = getSimplePuckVector();
 
-	Sector *sector = g_grim->getCurrSet()->findPointSector(_pos, Sector::WalkType);
+	Set * currSet = g_grim->getCurrSet();
+	if (!currSet)
+		return forwardVec;
+
+	Sector *sector = currSet->findPointSector(_pos, Sector::WalkType);
 	if (!sector)
 		return forwardVec;
 	else
@@ -737,14 +799,20 @@ void Actor::setMumbleChore(int chore, Costume *cost) {
 void Actor::turn(int dir) {
 	_walking = false;
 	float delta = g_grim->getPerSecond(_turnRate) * dir;
-	setYaw(_yaw + delta);
+	_moveYaw = _moveYaw + delta;
+	_turning = true;
 	_currTurnDir = dir;
 }
 
 Math::Angle Actor::getYawTo(Actor *a) const {
-	Math::Vector3d forwardVec(-_yaw.getSine(), _yaw.getCosine(), 0);
+	Math::Vector3d forwardVec = getSimplePuckVector();
 	Math::Vector3d delta = a->getPos() - _pos;
-	delta.z() = 0;
+
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		delta.y() = 0;
+	} else {
+		delta.z() = 0;
+	}
 
 	return Math::Vector3d::angle(forwardVec, delta);
 }
@@ -752,6 +820,9 @@ Math::Angle Actor::getYawTo(Actor *a) const {
 Math::Angle Actor::getYawTo(const Math::Vector3d &p) const {
 	Math::Vector3d dpos = p - _pos;
 
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		dpos.y() = dpos.z();
+	}
 	if (dpos.x() == 0 && dpos.y() == 0)
 		return 0;
 	else
@@ -777,7 +848,7 @@ void Actor::sayLine(const char *msgId, bool background) {
 	// a SayLine request rather than as part of the movie!
 
 	Common::String soundName = id;
-	
+
 	if (g_grim->getGameType() == GType_GRIM)
 		soundName += ".wav";
 	else
@@ -786,11 +857,12 @@ void Actor::sayLine(const char *msgId, bool background) {
 	if (_talkSoundName == soundName)
 		return;
 
-	if (g_sound->getSoundStatus(_talkSoundName.c_str()) || msg.empty())
+	if (_talking || msg.empty())
 		shutUp();
 
 	_talkSoundName = soundName;
 	if (g_grim->getSpeechMode() != GrimEngine::TextOnly) {
+		_talkDelay = 500;
 		if (g_sound->startVoice(_talkSoundName.c_str()) && g_grim->getCurrSet()) {
 			g_grim->getCurrSet()->setSoundPosition(_talkSoundName.c_str(), _pos);
 		}
@@ -820,9 +892,14 @@ void Actor::sayLine(const char *msgId, bool background) {
 		_talkAnim = -1;
 	}
 
-	g_grim->setTalkingActor(this);
+	_talking = true;
+	g_grim->addTalkingActor(this);
 
-	if (_sayLineText) {
+	_backgroundTalk = background;
+	if (background)
+		_isTalkingBackground = true;
+
+	if (_sayLineText && g_grim->getMode() != GrimEngine::SmushMode) {
 		delete TextObject::getPool().getObject(_sayLineText);
 		_sayLineText = 0;
 	}
@@ -831,9 +908,6 @@ void Actor::sayLine(const char *msgId, bool background) {
 		GrimEngine::SpeechMode m = g_grim->getSpeechMode();
 		if (!g_grim->_sayLineDefaults.getFont() || m == GrimEngine::VoiceOnly)
 			return;
-
-		if (g_grim->getMode() == GrimEngine::SmushMode)
-			TextObject::getPool().deleteObjects();
 
 		TextObject *textObject = new TextObject(false, true);
 		textObject->setDefaults(&g_grim->_sayLineDefaults);
@@ -844,6 +918,7 @@ void Actor::sayLine(const char *msgId, bool background) {
 		if (g_grim->getMode() == GrimEngine::SmushMode) {
 			textObject->setX(640 / 2);
 			textObject->setY(456);
+			g_grim->setMovieSubtitle(textObject);
 		} else {
 			if (_visible && isInSet(g_grim->getCurrSet()->getName())) {
 				_mustPlaceText = true;
@@ -867,15 +942,12 @@ void Actor::lineCleanup() {
 }
 
 bool Actor::isTalking() {
-	// If there's no sound file then we're obviously not talking
-	GrimEngine::SpeechMode m = g_grim->getSpeechMode();
-	TextObject *textObject = NULL;
-	if (_sayLineText)
-		textObject = TextObject::getPool().getObject(_sayLineText);
-	if ((m == GrimEngine::TextOnly && !textObject) ||
-			(m != GrimEngine::TextOnly && (strlen(_talkSoundName.c_str()) == 0 || !g_sound->getSoundStatus(_talkSoundName.c_str())))) {
+	if (!_talking) {
 		return false;
 	}
+
+	if (_backgroundTalk)
+		return _isTalkingBackground;
 
 	return true;
 }
@@ -902,9 +974,16 @@ void Actor::shutUp() {
 		delete TextObject::getPool().getObject(_sayLineText);
 		_sayLineText = 0;
 	}
-	if (g_grim->getTalkingActor() == this) {
-		g_grim->setTalkingActor(NULL);
-	}
+
+	// The actors talking in background have a special behaviour: if there are two or more of them
+	// talking at the same time, after one of them finishes talking calling isTalking() an *all*
+	// of them must return false. This is necessary for the angelitos in set fo: when they start crying
+	// they talk in background, and the lua script that hangs on IsMessageGoing() must return before they
+	// stop, since they can go on forever.
+	if (_backgroundTalk)
+		_isTalkingBackground = false;
+
+	_talking = false;
 }
 
 void Actor::pushCostume(const char *n) {
@@ -1025,14 +1104,14 @@ void Actor::update(uint frameTime) {
 
 	if (_turning) {
 		float turnAmt = g_grim->getPerSecond(_turnRate) * 5.f;
-		Math::Angle dyaw = _destYaw - _yaw;
+		Math::Angle dyaw = _moveYaw - _yaw;
 		dyaw.normalize(-180);
 		// If the actor won't turn because the rate is set to zero then
 		// have the actor turn all the way to the destination yaw.
 		// Without this some actors will lock the interface on changing
 		// scenes, this affects the Bone Wagon in particular.
 		if (turnAmt == 0 || turnAmt >= fabsf(dyaw.getDegrees())) {
-			setYaw(_destYaw);
+			setYaw(_moveYaw);
 			_turning = false;
 		} else if (dyaw > 0) {
 			setYaw(_yaw + turnAmt);
@@ -1142,7 +1221,7 @@ void Actor::update(uint frameTime) {
 		}
 	}
 
-	frameTime *= _timeScale;
+	frameTime = (uint)(frameTime * _timeScale);
 	for (Common::List<Costume *>::iterator i = _costumeStack.begin(); i != _costumeStack.end(); ++i) {
 		Costume *c = *i;
 		c->setPosRotate(_pos, _pitch, _yaw, _roll);
@@ -1163,6 +1242,32 @@ void Actor::update(uint frameTime) {
 	}
 }
 
+// Not all the talking actors are in the current set, and so on not all the talking actors
+// update() is called. For example, Don when he comes out of his office after reaping Meche.
+bool Actor::updateTalk(uint frameTime) {
+	if (_talking) {
+		// If there's no sound file then we're obviously not talking
+		GrimEngine::SpeechMode m = g_grim->getSpeechMode();
+		TextObject *textObject = NULL;
+		if (_sayLineText)
+			textObject = TextObject::getPool().getObject(_sayLineText);
+		if (m == GrimEngine::TextOnly && !textObject) {
+			shutUp();
+			return false;
+		} else if (m != GrimEngine::TextOnly && (strlen(_talkSoundName.c_str()) == 0 || !g_sound->getSoundStatus(_talkSoundName.c_str()))) {
+			_talkDelay -= frameTime;
+			if (_talkDelay <= 0) {
+				_talkDelay = 0;
+				shutUp();
+				return false;
+			}
+		}
+		return true;
+	}
+
+	return false;
+}
+
 void Actor::draw() {
 	for (Common::List<Costume *>::iterator i = _costumeStack.begin(); i != _costumeStack.end(); ++i) {
 		Costume *c = *i;
@@ -1170,7 +1275,7 @@ void Actor::draw() {
 	}
 
 	if (!g_driver->isHardwareAccelerated() && g_grim->getFlagRefreshShadowMask()) {
-		for (int l = 0; l < 5; l++) {
+		for (int l = 0; l < MAX_SHADOWS; l++) {
 			if (!_shadowArray[l].active)
 				continue;
 			g_driver->setShadow(&_shadowArray[l]);
@@ -1179,23 +1284,28 @@ void Actor::draw() {
 		}
 	}
 
+	// FIXME: if isAttached(), factor in the joint & actor rotation as well.
+	Math::Vector3d absPos = getWorldPos();
 	if (!_costumeStack.empty()) {
+		g_grim->getCurrSet()->setupLights(absPos);
+
 		Costume *costume = _costumeStack.back();
-		for (int l = 0; l < 5; l++) {
+		for (int l = 0; l < MAX_SHADOWS; l++) {
 			if (!shouldDrawShadow(l))
 				continue;
 			g_driver->setShadow(&_shadowArray[l]);
 			g_driver->setShadowMode();
 			if (g_driver->isHardwareAccelerated())
 				g_driver->drawShadowPlanes();
-			g_driver->startActorDraw(_pos, _scale, _yaw, _pitch, _roll);
+			g_driver->startActorDraw(absPos, _scale, _yaw, _pitch, _roll, _inOverworld, _alphaMode != AlphaOff ? _globalAlpha : 1.f);
 			costume->draw();
 			g_driver->finishActorDraw();
 			g_driver->clearShadowMode();
 			g_driver->setShadow(NULL);
 		}
+
 		// normal draw actor
-		g_driver->startActorDraw(_pos, _scale, _yaw, _pitch, _roll);
+		g_driver->startActorDraw(absPos, _scale, _yaw, _pitch, _roll, _inOverworld, _alphaMode != AlphaOff ? _globalAlpha : 1.f);
 		costume->draw();
 		g_driver->finishActorDraw();
 	}
@@ -1205,7 +1315,7 @@ void Actor::draw() {
 		x1 = y1 = 1000;
 		x2 = y2 = -1000;
 		if (!_costumeStack.empty()) {
-			g_driver->startActorDraw(_pos, _scale, _yaw, _pitch, _roll);
+			g_driver->startActorDraw(absPos, _scale, _yaw, _pitch, _roll, _inOverworld, 1.f);
 			_costumeStack.back()->getBoundingBox(&x1, &y1, &x2, &y2);
 			g_driver->finishActorDraw();
 		}
@@ -1225,12 +1335,6 @@ void Actor::draw() {
 	}
 }
 
-// "Undraw objects" (handle objects for actors that may not be on screen)
-void Actor::undraw(bool /*visible*/) {
-	if (!isTalking())
-		shutUp();
-}
-
 void Actor::setShadowPlane(const char *n) {
 	assert(_activeShadowSlot != -1);
 
@@ -1240,20 +1344,15 @@ void Actor::setShadowPlane(const char *n) {
 void Actor::addShadowPlane(const char *n, Set *scene, int shadowId) {
 	assert(shadowId != -1);
 
-	int numSectors = scene->getSectorCount();
-
-	for (int i = 0; i < numSectors; i++) {
+	Sector *sector = scene->getSector(n);
+	if (sector) {
 		// Create a copy so we are sure it will not be deleted by the Set destructor
 		// behind our back. This is important when Membrillo phones Velasco to tell him
 		// Naranja is dead, because the scene changes back and forth few times and so
 		// the scenes' sectors are deleted while they are still keeped by the actors.
-		Sector *sector = scene->getSectorBase(i);
-		if (!strcmp(sector->getName(), n)) {
-			Plane p = { scene->getName(), new Sector(*sector) };
-			_shadowArray[shadowId].planeList.push_back(p);
-			g_grim->flagRefreshShadowMask(true);
-			return;
-		}
+		Plane p = { scene->getName(), new Sector(*sector) };
+		_shadowArray[shadowId].planeList.push_back(p);
+		g_grim->flagRefreshShadowMask(true);
 	}
 }
 
@@ -1306,7 +1405,7 @@ void Actor::setShadowPoint(const Math::Vector3d &p) {
 }
 
 void Actor::clearShadowPlanes() {
-	for (int i = 0; i < 5; i++) {
+	for (int i = 0; i < MAX_SHADOWS; i++) {
 		Shadow *shadow = &_shadowArray[i];
 		while (!shadow->planeList.empty()) {
 			delete shadow->planeList.back().sector;
@@ -1324,6 +1423,8 @@ void Actor::putInSet(const Common::String &setName) {
 	// The set should change immediately, otherwise a very rapid set change
 	// for an actor will be recognized incorrectly and the actor will be lost.
 	_setName = setName;
+
+	g_grim->invalidateActiveActorsList();
 }
 
 bool Actor::isInSet(const Common::String &setName) const {
@@ -1574,6 +1675,57 @@ void Actor::collisionHandlerCallback(Actor *other) const {
 	LuaBase::instance()->callback("collisionHandler", objects);
 }
 
+Math::Vector3d Actor::getWorldPos() const {
+	if (! isAttached())
+		return getPos();
+
+	EMICostume * cost = dynamic_cast<EMICostume *>(_attachedActor->getCurrentCostume());
+	assert(cost != NULL);
+
+	Math::Matrix4 attachedToWorld;
+	attachedToWorld.setPosition(_attachedActor->getPos());
+	attachedToWorld.buildFromPitchYawRoll(_attachedActor->getPitch(), _attachedActor->getYaw(), _attachedActor->getRoll());
+
+	// If we were attached to a joint, factor in the joint's position & rotation,
+	// relative to its actor.
+	if (cost->_emiSkel && cost->_emiSkel->_obj) {
+		Joint * j = cost->_emiSkel->_obj->getJointNamed(_attachedJoint);
+		const Math::Matrix4 & jointToAttached = j->_finalMatrix;
+		attachedToWorld = attachedToWorld * jointToAttached;
+	}
+
+	Math::Vector3d myPos = getPos();
+	attachedToWorld.transform(&myPos, true);
+	return myPos;
+}
+
+void Actor::attachToActor(Actor *other, const char *joint) {
+	assert(other != NULL);
+	if (other == _attachedActor)
+		return;
+	if (_attachedActor != NULL)
+		detach();
+
+	EMICostume * cost = dynamic_cast<EMICostume *>(other->getCurrentCostume());
+	assert(cost != NULL);
+
+	Common::String jointStr = joint ? joint : "";
+	// If 'other' has a skeleton, check if it has the joint.
+	// Some models (pile o' boulders) don't have a skeleton,
+	// so we don't make the check in that case.
+	if (cost->_emiSkel && cost->_emiSkel->_obj)
+		assert(cost->_emiSkel->_obj->hasJoint(jointStr));
+
+	_attachedActor = other;
+	_attachedJoint = jointStr;
+}
+
+void Actor::detach() {
+	if (_attachedActor != NULL) {
+		_attachedJoint = "";
+		_attachedActor = NULL;
+	}
+}
 
 unsigned const int Actor::Chore::fadeTime = 150;
 
@@ -1628,16 +1780,16 @@ bool Actor::Chore::isPlaying() const {
 
 void Actor::Chore::saveState(SaveGame *savedState) const {
 	if (_costume) {
-		savedState->writeLEUint32(1);
+		savedState->writeBool(true);
 		savedState->writeString(_costume->getFilename());
 	} else {
-		savedState->writeLEUint32(0);
+		savedState->writeBool(false);
 	}
 	savedState->writeLESint32(_chore);
 }
 
 void Actor::Chore::restoreState(SaveGame *savedState, Actor *actor) {
-	if (savedState->readLEUint32()) {
+	if (savedState->readBool()) {
 		Common::String fname = savedState->readString();
 		_costume = actor->findCostume(fname);
 	} else {
