@@ -294,11 +294,20 @@ void Script::setupOpcodesPS2() {
 	OP_4(129, ifMouseIsInRect,				kValue,		kValue,		kValue,		kValue					);
 	OP_1(139, goToNodeTrans2,				kValue														);
 	OP_2(141, goToRoomNode,					kValue,		kValue											);
+	OP_0(148, redrawFrame																				);
+	OP_0(164, cameraFreeMovement																		);
+	OP_2(165, cameraLookAt,					kValue,		kValue											);
+	OP_1(169, cameraSetFOV,					kEvalValue													);
 	OP_3(172, changeNodeRoomAge,			kValue,		kValue,		kValue								);
+	OP_1(178, whileStart,					kCondition													);
+	OP_0(179, whileEnd																					);
 	OP_1(192, runScript,					kEvalValue													);
 	OP_1(194, runCommonScript,				kValue														);
 	OP_1(197, runPuzzle1,					kValue														);
 	OP_4(200, changeNodeRoomAgePS2,			kValue,		kValue,		kValue,		kValue					);
+	OP_2(209, soundPlayVolume,				kEvalValue,	kEvalValue										);
+	OP_3(210, soundPlayVolumeDirection,		kEvalValue,	kEvalValue,	kEvalValue							);
+	OP_3(230, runSoundScriptNodeRoomAge,	kEvalValue,	kEvalValue,	kEvalValue							);
 	OP_0(235, drawOneFrame																				);
 	OP_0(245, newGame																					);
 }
@@ -1343,7 +1352,6 @@ void Script::ifElse(Context &c, const Opcode &cmd) {
 void Script::goToElse(Context &c) {
 	int opcode = (_vm->getPlatform() == Common::kPlatformPS2) ? 108 : 104;
 
-
 	// Go to next command until an else statement is met
 	do {
 		c.op++;
@@ -2036,6 +2044,8 @@ void Script::drawWhileCond(Context &c, const Opcode &cmd) {
 }
 
 void Script::whileStart(Context &c, const Opcode &cmd) {
+	int opcode = (_vm->getPlatform() == Common::kPlatformPS2) ? 179 : 173;
+
 	c.whileStart = c.op - 1;
 
 	// Check the while condition
@@ -2044,7 +2054,7 @@ void Script::whileStart(Context &c, const Opcode &cmd) {
 		do {
 			c.op++;
 		} while (c.op != c.script->end()
-				&& c.op->op != 173);
+				&& c.op->op != opcode);
 	}
 
 	_vm->processInput(true);
