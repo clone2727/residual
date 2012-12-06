@@ -248,13 +248,6 @@ void LuaBase::loadSystemScript() {
 	dofile("_system.lua");
 }
 
-bool LuaBase::supportedVersion() {
-	if (lua_isnil(lua_getglobal("game_needs_update")))
-		return true;
-	else
-		return false;
-}
-
 void LuaBase::boot() {
 	lua_pushnil();		// resumeSave
 	lua_pushnil();		// bootParam - not used in scripts
@@ -487,7 +480,7 @@ void LuaBase::setTextObjectParams(TextObjectCommon *textObject, lua_Object table
 		if (lua_isnumber(keyObj)) {
 			float num = lua_getnumber(keyObj);
 			if (g_grim->getGameType() == GType_MONKEY4)
-				textObject->setX((int)(num * 640));
+				textObject->setX((int)(num * 320));
 			else
 				textObject->setX((int)num);
 		}
@@ -500,7 +493,7 @@ void LuaBase::setTextObjectParams(TextObjectCommon *textObject, lua_Object table
 		if (lua_isnumber(keyObj)) {
 			float num = lua_getnumber(keyObj);
 			if (g_grim->getGameType() == GType_MONKEY4)
-				textObject->setY((int)(num * 480));
+				textObject->setY((int)(num * 240));
 			else
 				textObject->setY((int)num);
 		}
@@ -525,6 +518,10 @@ void LuaBase::setTextObjectParams(TextObjectCommon *textObject, lua_Object table
 			textObject->setFont(font);
 		} else if (lua_isuserdata(keyObj) && lua_tag(keyObj) == MKTAG('F','O','N','T')) {
 			textObject->setFont(getfont(keyObj));
+		} else if (g_grim->getGameType() == GType_MONKEY4 && !textObject->getFont() && g_grim->getGamePlatform() == Common::kPlatformPS2) {
+			// HACK:
+			warning("HACK: No default font set for PS2-version, just picking one for now");
+			textObject->setFont(*Font::getPool().begin());
 		}
 	}
 

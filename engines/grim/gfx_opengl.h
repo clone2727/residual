@@ -52,7 +52,7 @@ public:
 	const char *getVideoDeviceName();
 
 	void setupCamera(float fov, float nclip, float fclip, float roll);
-	void positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest);
+	void positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest, float roll);
 
 	void clearScreen();
 	void flipBuffer();
@@ -61,9 +61,8 @@ public:
 
 	void getBoundingBoxPos(const Mesh *model, int *x1, int *y1, int *x2, int *y2);
 
-	void startActorDraw(const Math::Vector3d &pos, float scale, const Math::Angle &yaw,
-						const Math::Angle &pitch, const Math::Angle &roll, const bool inOverworld,
-						const float alpha);
+	void startActorDraw(const Math::Vector3d &pos, float scale, const Math::Quaternion &quat,
+	                    const bool inOverworld, const float alpha);
 	void finishActorDraw();
 	void setShadow(Shadow *shadow);
 	void drawShadowPlanes();
@@ -93,14 +92,14 @@ public:
 	void destroyMaterial(Texture *material);
 
 	void createBitmap(BitmapData *bitmap);
-	void drawBitmap(const Bitmap *bitmap, int x, int y);
+	void drawBitmap(const Bitmap *bitmap, int x, int y, bool initialDraw = true);
 	void destroyBitmap(BitmapData *bitmap);
 
 	void createFont(Font *font);
 	void destroyFont(Font *font);
 
 	void createTextObject(TextObject *text);
-	void drawTextObject(TextObject *text);
+	void drawTextObject(const TextObject *text);
 	void destroyTextObject(TextObject *text);
 
 	Bitmap *getScreenshot(int w, int h);
@@ -113,9 +112,9 @@ public:
 	void drawEmergString(int x, int y, const char *text, const Color &fgColor);
 	void loadEmergFont();
 
-	void drawRectangle(PrimitiveObject *primitive);
-	void drawLine(PrimitiveObject *primitive);
-	void drawPolygon(PrimitiveObject *primitive);
+	void drawRectangle(const PrimitiveObject *primitive);
+	void drawLine(const PrimitiveObject *primitive);
+	void drawPolygon(const PrimitiveObject *primitive);
 
 	void prepareMovieFrame(Graphics::Surface* frame);
 	void drawMovieFrame(int offsetX, int offsetY);

@@ -47,9 +47,10 @@ struct ChoreTrack {
 
 class Chore {
 public:
-	Chore();
+	Chore(char name[32], int id, Costume *owner, int length, int numTracks);
 	virtual ~Chore();
-	void load(int id, Costume *owner, TextSplitter &ts);
+
+	void load(TextSplitter &ts);
 	void play();
 	void playLooping();
 	void setLooping(bool val) { _looping = val; }
@@ -58,19 +59,23 @@ public:
 	void setLastFrame();
 	void fadeIn(uint msecs);
 	void fadeOut(uint msecs);
-	void cleanup();
 
 	bool isPlaying() { return _playing; }
 	bool isLooping() { return _looping; }
 
-	virtual int getId() { return _choreId; }
-	
-	void setOwner(Costume *owner) { _owner = owner; }
-	void createTracks(int num);
+	const char *getName() const { return _name; }
+
+	int getChoreId() { return _choreId; }
+
+	Costume *getOwner() { return _owner; }
+
+	void saveState(SaveGame *state) const;
+	void restoreState(SaveGame *state);
 
 private:
 	void setKeys(int startTime, int stopTime);
 	void fade(Animation::FadeMode, uint msecs);
+	Component *getComponentForTrack(int i) const;
 
 	Costume *_owner;
 
@@ -83,13 +88,12 @@ private:
 	bool _hasPlayed, _playing, _looping;
 	int _currTime;
 
-	friend class Costume;
 	friend class EMICostume;
 };
 
 class PoolChore : public PoolObject<PoolChore>, public Chore {
 public:
-	virtual int getId() { return PoolObject<PoolChore>::getId(); }
+	PoolChore(char name[32], int id, Costume *owner, int length, int numTracks) : Chore(name, id, owner, length, numTracks){}
 	static int32 getStaticTag() { return MKTAG('C', 'H', 'O', 'R'); }
 };
 

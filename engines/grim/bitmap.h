@@ -102,6 +102,23 @@ public:
 
 	int _refCount;
 
+	float *_texc;
+
+	struct Vert {
+		uint32 _texid;
+		uint32 _pos;
+		uint32 _verts;
+	};
+	struct Layer {
+		uint32 _offset;
+		uint32 _numImages;
+	};
+	Vert *_verts;
+	Layer *_layers;
+	uint32 _numCoords;
+	uint32 _numVerts;
+	uint32 _numLayers;
+
 // private:
 	Graphics::PixelBuffer *_data;
 };
@@ -128,6 +145,8 @@ public:
 	void draw();
 	void draw(int x, int y);
 
+	void drawForeground();
+
 	/**
 	 * Set which image in an animated bitmap to use
 	 *
@@ -153,7 +172,7 @@ public:
 
 	virtual ~Bitmap();
 
-private:
+//private:
 	void freeData();
 
 	BitmapData *_data;

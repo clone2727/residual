@@ -130,6 +130,7 @@ void Costume::load(Common::SeekableReadStream *data) {
 		for (int j = 0; j < 4; j++)
 			t[j] = toupper(t[j]);
 		memcpy(&tags[which], t, sizeof(tag32));
+		tags[which] = FROM_BE_32(tags[which]);
 	}
 
 	ts.expectString("section components");
@@ -148,17 +149,14 @@ void Costume::load(Common::SeekableReadStream *data) {
 		// use the properties of the previous costume as a base
 		if (parentID == -1) {
 			if (_prevCostume) {
-				MainModelComponent *mmc;
-
 				// However, only the first item can actually share the
 				// node hierarchy with the previous costume, so flag
 				// that component so it knows what to do
 				if (i == 0)
 					parentID = -2;
 				prevComponent = _prevCostume->_components[0];
-				mmc = dynamic_cast<MainModelComponent *>(prevComponent);
 				// Make sure that the component is valid
-				if (!mmc)
+				if (!prevComponent->isComponentType('M','M','D','L'))
 					prevComponent = NULL;
 			} else if (id > 0) {
 				// Use the MainModelComponent of this costume as prevComponent,
@@ -185,10 +183,7 @@ void Costume::load(Common::SeekableReadStream *data) {
 		int id, length, tracks;
 		char name[32];
 		ts.scanString(" %d %d %d %32s", 4, &id, &length, &tracks, name);
-		_chores[id] = new Chore();
-		_chores[id]->_length = length;
-		_chores[id]->_numTracks = tracks;
-		memcpy(_chores[id]->_name, name, 32);
+		_chores[id] = new Chore(name, i, this, length, tracks);
 		Debug::debug(Debug::Chores, "Loaded chore: %s\n", name);
 	}
 
@@ -196,7 +191,7 @@ void Costume::load(Common::SeekableReadStream *data) {
 	for (int i = 0; i < _numChores; i++) {
 		int which;
 		ts.scanString("chore %d", 1, &which);
-		_chores[which]->load(i, this, ts);
+		_chores[which]->load(ts);
 	}
 }
 
@@ -219,27 +214,27 @@ Costume::~Costume() {
 }
 
 Component *Costume::loadComponent (tag32 tag, Component *parent, int parentID, const char *name, Component *prevComponent) {
-	if (FROM_BE_32(tag) == MKTAG('M','M','D','L'))
+	if (tag == MKTAG('M','M','D','L'))
 		return new MainModelComponent(parent, parentID, name, prevComponent, tag);
-	else if (FROM_BE_32(tag) == MKTAG('M','O','D','L'))
+	else if (tag == MKTAG('M','O','D','L'))
 		return new ModelComponent(parent, parentID, name, prevComponent, tag);
-	else if (FROM_BE_32(tag) == MKTAG('C','M','A','P'))
+	else if (tag == MKTAG('C','M','A','P'))
 		return new ColormapComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('K','E','Y','F'))
+	else if (tag == MKTAG('K','E','Y','F'))
 		return new KeyframeComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('M','E','S','H'))
+	else if (tag == MKTAG('M','E','S','H'))
 		return new MeshComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('L','U','A','V'))
+	else if (tag == MKTAG('L','U','A','V'))
 		return new LuaVarComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('I','M','L','S'))
+	else if (tag == MKTAG('I','M','L','S'))
 		return new SoundComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('B','K','N','D'))
+	else if (tag == MKTAG('B','K','N','D'))
 		return new BitmapComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('M','A','T',' '))
+	else if (tag == MKTAG('M','A','T',' '))
 		return new MaterialComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('S','P','R','T'))
+	else if (tag == MKTAG('S','P','R','T'))
 		return new SpriteComponent(parent, parentID, name, tag);
-	else if (FROM_BE_32(tag) == MKTAG('A','N','I','M')) //Used  in the demo
+	else if (tag == MKTAG('A','N','I','M')) //Used  in the demo
 		return new BitmapComponent(parent, parentID, name, tag);
 
 	char t[4];
@@ -252,7 +247,7 @@ ModelComponent *Costume::getMainModelComponent() const {
 	for (int i = 0; i < _numComponents; i++) {
 		// Needs to handle Main Models (pigeons) and normal Models
 		// (when Manny climbs the rope)
-		if (FROM_BE_32(_components[i]->getTag()) == MKTAG('M','M','D','L'))
+		if (_components[i]->isComponentType('M','M','D','L'))
 			return static_cast<ModelComponent *>(_components[i]);
 	}
 	return NULL;
@@ -290,6 +285,17 @@ void Costume::setChoreLooping(int num, bool val) {
 	_chores[num]->setLooping(val);
 }
 
+void Costume::playChoreLooping(const char *name) {
+	for (int i = 0; i < _numChores; ++i) {
+		if (strcmp(_chores[i]->getName(), name) == 0) {
+			playChoreLooping(i);
+			return;
+		}
+	}
+	warning("Costume::playChoreLooping: Could not find chore: %s", name);
+	return;
+}
+
 void Costume::playChoreLooping(int num) {
 	if (num < 0 || num >= _numChores) {
 		Debug::warning(Debug::Chores, "Requested chore number %d is outside the range of chores (0-%d)", num, _numChores);
@@ -302,7 +308,7 @@ void Costume::playChoreLooping(int num) {
 
 Chore *Costume::getChore(const char *name) {
 	for (int i = 0; i < _numChores; ++i) {
-		if (strcmp(_chores[i]->_name, name) == 0) {
+		if (strcmp(_chores[i]->getName(), name) == 0) {
 			return _chores[i];
 		}
 	}
@@ -311,7 +317,7 @@ Chore *Costume::getChore(const char *name) {
 
 int Costume::getChoreId(const char *name) {
 	for (int i = 0; i < _numChores; ++i) {
-		if (strcmp(_chores[i]->_name, name) == 0) {
+		if (strcmp(_chores[i]->getName(), name) == 0) {
 			return i;
 		}
 	}
@@ -320,7 +326,7 @@ int Costume::getChoreId(const char *name) {
 
 void Costume::playChore(const char *name) {
 	for (int i = 0; i < _numChores; ++i) {
-			if (strcmp(_chores[i]->_name, name) == 0) {
+		if (strcmp(_chores[i]->getName(), name) == 0) {
 			playChore(i);
 			return;
 		}
@@ -385,7 +391,7 @@ void Costume::fadeChoreOut(int chore, int msecs) {
 
 int Costume::isChoring(const char *name, bool excludeLooping) {
 	for (int i = 0; i < _numChores; i++) {
-		if (!strcmp(_chores[i]->_name, name) && _chores[i]->_playing && !(excludeLooping && _chores[i]->_looping))
+		if (!strcmp(_chores[i]->getName(), name) && _chores[i]->isPlaying() && !(excludeLooping && _chores[i]->isLooping()))
 			return i;
 	}
 	return -1;
@@ -396,7 +402,7 @@ int Costume::isChoring(int num, bool excludeLooping) {
 		Debug::warning(Debug::Chores, "Requested chore number %d is outside the range of chores (0-%d)", num, _numChores);
 		return -1;
 	}
-	if (_chores[num]->_playing && !(excludeLooping && _chores[num]->_looping))
+	if (_chores[num]->isPlaying() && !(excludeLooping && _chores[num]->isLooping()))
 		return num;
 	else
 		return -1;
@@ -404,7 +410,7 @@ int Costume::isChoring(int num, bool excludeLooping) {
 
 int Costume::isChoring(bool excludeLooping) {
 	for (int i = 0; i < _numChores; i++) {
-		if (_chores[i]->_playing && !(excludeLooping && _chores[i]->_looping))
+		if (_chores[i]->isPlaying() && !(excludeLooping && _chores[i]->isLooping()))
 			return i;
 	}
 	return -1;
@@ -424,8 +430,9 @@ void Costume::draw() {
 
 void Costume::getBoundingBox(int *x1, int *y1, int *x2, int *y2) {
 	for (int i = 0; i < _numComponents; i++) {
-		ModelComponent *c = dynamic_cast<ModelComponent *>(_components[i]);
-		if (c) {
+		if (_components[i] &&(_components[i]->isComponentType('M','M','D','L') ||
+							  _components[i]->isComponentType('M','O','D','L'))) {
+			ModelComponent *c = static_cast<ModelComponent *>(_components[i]);
 			c->getBoundingBox(x1, y1, x2, y2);
 		}
 	}
@@ -434,7 +441,7 @@ void Costume::getBoundingBox(int *x1, int *y1, int *x2, int *y2) {
 int Costume::update(uint time) {
 	for (Common::List<Chore*>::iterator i = _playingChores.begin(); i != _playingChores.end(); ++i) {
 		(*i)->update(time);
-		if (!(*i)->_playing) {
+		if (!(*i)->isPlaying()) {
 			i = _playingChores.erase(i);
 			--i;
 		}
@@ -503,12 +510,7 @@ void Costume::saveState(SaveGame *state) const {
 	}
 
 	for (int i = 0; i < _numChores; ++i) {
-		Chore *c = _chores[i];
-
-		state->writeBool(c->_hasPlayed);
-		state->writeBool(c->_playing);
-		state->writeBool(c->_looping);
-		state->writeLESint32(c->_currTime);
+		_chores[i]->saveState(state);
 	}
 
 	for (int i = 0; i < _numComponents; ++i) {
@@ -523,7 +525,7 @@ void Costume::saveState(SaveGame *state) const {
 
 	state->writeLEUint32(_playingChores.size());
 	for (Common::List<Chore*>::const_iterator i = _playingChores.begin(); i != _playingChores.end(); ++i) {
-		state->writeLESint32((*i)->getId());
+		state->writeLESint32((*i)->getChoreId());
 	}
 
 	state->writeFloat(_lookAtRate);
@@ -537,13 +539,9 @@ bool Costume::restoreState(SaveGame *state) {
 	}
 
 	for (int i = 0; i < _numChores; ++i) {
-		Chore *c = _chores[i];
-
-		c->_hasPlayed = state->readBool();
-		c->_playing = state->readBool();
-		c->_looping = state->readBool();
-		c->_currTime = state->readLESint32();
+		_chores[i]->restoreState(state);
 	}
+
 	for (int i = 0; i < _numComponents; ++i) {
 		Component *c = _components[i];
 

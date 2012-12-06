@@ -39,9 +39,7 @@ public:
 	void draw();
 
 public:
-	Common::String _filename;
 	Sprite *_sprite;
-	friend class Costume;
 };
 
 } // end of namespace Grim

@@ -84,11 +84,15 @@ bool EMISound::startVoice(const char *soundName, int volume, int pan) {
 	int channel = getFreeChannel();
 	assert(channel != -1);
 	
-	_channels[channel] = new VimaTrack(soundName);
+	// TODO: This could be handled on filenames instead
+	if (g_grim->getGamePlatform() == Common::kPlatformPS2)
+		_channels[channel] = new SCXTrack(Audio::Mixer::kSpeechSoundType);
+	else
+		_channels[channel] = new VimaTrack(soundName);
 	
 	Common::SeekableReadStream *str = g_resourceloader->openNewStreamFile(soundName);
 
-	if (_channels[channel]->openSound(soundName, str)) {
+	if (str && _channels[channel]->openSound(soundName, str)) {
 		_channels[channel]->play();
 		return true;
 	}
@@ -132,7 +136,10 @@ void EMISound::setMusicState(int stateId) {
 		delete _music;
 		_music = NULL;
 	}
-	if (stateId == 0 || (_musicTable != NULL && _musicTable[stateId]._id != stateId)) {
+	if (stateId == 0)
+		return;
+	if (_musicTable != NULL && _musicTable[stateId]._id != stateId) {
+		warning("Attempted to play track #%d, not found in music table!", stateId);
 		return;
 	}
 	Common::String filename;
@@ -145,6 +152,7 @@ void EMISound::setMusicState(int stateId) {
 		filename = _musicTable[stateId]._filename;
 		_music = new MP3Track(Audio::Mixer::kMusicSoundType);	
 	}
+	warning("Loading music: %s", filename.c_str());
 	Common::SeekableReadStream *str = g_resourceloader->openNewStreamFile(_musicPrefix + filename);
 
 	if (_music->openSound(filename, str))
@@ -159,8 +167,13 @@ uint32 EMISound::getMsPos(int stateId) {
 	
 MusicEntry *initMusicTableDemo(Common::String filename) {
 	Common::SeekableReadStream *data = g_resourceloader->openNewStreamFile(filename);
+
+	if (!data)
+		error("Couldn't open %s", filename.c_str());
 	// FIXME, for now we use a fixed-size table, as I haven't looked at the retail-data yet.
 	MusicEntry *musicTable = new MusicEntry[15];
+	for (unsigned int i = 0; i < 15; i++)
+		musicTable[i]._id = -1;
 	
 	TextSplitter *ts = new TextSplitter(data);
 	int id, x, y, sync;
@@ -183,6 +196,7 @@ MusicEntry *initMusicTableDemo(Common::String filename) {
 		ts->nextLine();
 	}
 	delete ts;
+	delete data;
 	return musicTable;
 }
 
@@ -193,6 +207,8 @@ MusicEntry *initMusicTableRetail(Common::String filename) {
 	if (!data)
 		error("Couldn't open %s", filename.c_str());
 	MusicEntry *musicTable = new MusicEntry[126];
+	for (unsigned int i = 0; i < 126; i++)
+		musicTable[i]._id = -1;
 	
 	TextSplitter *ts = new TextSplitter(data);
 	int id, x, y, sync, trim;
@@ -220,6 +236,7 @@ MusicEntry *initMusicTableRetail(Common::String filename) {
 		ts->nextLine();
 	}
 	delete ts;
+	delete data;
 	return musicTable;
 }
 
@@ -237,4 +254,43 @@ void EMISound::initMusicTable() {
 		_musicPrefix = "Textures/spago/"; // Hardcode the high-quality music for now.
 	}
 }
+
+void EMISound::selectMusicSet(int setId) {
+	if (g_grim->getGamePlatform() == Common::kPlatformPS2) {
+		assert(setId == 0);
+		_musicPrefix = "";
+		return;
+	}
+	if (setId == 0) {
+		_musicPrefix = "Textures/spago/";
+	} else if (setId == 1) {
+		_musicPrefix = "Textures/mego/";
+	} else {
+		error("EMISound::selectMusicSet - Unknown setId %d", setId);
+	}
+}
+
+void EMISound::pushStateToStack() {
+	if (_music)
+		_music->pause();
+	_stateStack.push(_music);
+	_music = NULL;
+}
+
+void EMISound::popStateFromStack() {
+	if (_music) {
+		delete _music;
+		_music = _stateStack.pop();
+		if (_music)
+			_music->pause();
+	}
+}
+
+void EMISound::flushStack() {
+	while (!_stateStack.empty()) {
+		SoundTrack *temp = _stateStack.pop();
+		delete temp;
+	}
+}
+
 } // end of namespace Grim

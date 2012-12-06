@@ -42,6 +42,7 @@ class LipSync;
 class TrackedObject;
 class SaveGame;
 class Skeleton;
+struct Sprite;
 class Lab;
 
 typedef ObjectPtr<Material> MaterialPtr;
@@ -65,6 +66,7 @@ public:
 	EMIModel *loadModelEMI(const Common::String &fname, EMIModel *parent = NULL);
 	LipSync *loadLipSync(const Common::String &fname);
 	Skeleton *loadSkeleton(const Common::String &fname);
+	Sprite *loadSprite(const Common::String &fname);
 	AnimationEmi *loadAnimationEmi(const Common::String &filename);
 	Common::SeekableReadStream *openNewStreamFile(Common::String fname, bool cache = false) const;
 
@@ -82,6 +84,8 @@ public:
 		byte *resPtr;
 		uint32 len;
 	};
+
+	static Common::String fixFilename(const Common::String &filename, bool append = true);
 
 private:
 	Common::SeekableReadStream *loadFile(const Common::String &filename) const;

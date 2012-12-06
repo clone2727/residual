@@ -41,6 +41,39 @@ void Sprite::draw() const {
 	g_driver->drawSprite(this);
 }
 
+void Sprite::loadBinary(Common::SeekableReadStream *stream) {
+	if (!stream)
+		return;
+
+	uint32 namelength = stream->readUint32LE();
+	stream->skip(namelength);
+
+	stream->seek(40, SEEK_CUR);
+	uint32 texnamelength = stream->readUint32LE();
+	char *texname = new char[texnamelength];
+	stream->read(texname, texnamelength);
+	/* unknown = */ stream->readUint32LE();
+	float width, height;
+	float offX, offY;
+	char data[16];
+	stream->read(data, sizeof(data));
+	width = get_float(data);
+	height = get_float(data + 4);
+	offX = get_float(data + 8);
+	offY = get_float(data + 12);
+
+
+	_material = g_resourceloader->loadMaterial(texname, 0);
+	_width = width;
+	_height = height;
+	_next = NULL;
+	_visible = true;
+	_pos.set(-offX, offY, 0);
+
+	delete[] texname;
+}
+
+
 /**
  * @class Model
  */
@@ -115,7 +148,7 @@ void Model::loadBinary(Common::SeekableReadStream *data) {
 		data->read(_materialNames[i], 32);
 		_materialsShared[i] = false;
 		_materials[i] = NULL;
-		loadMaterial(i);
+		loadMaterial(i, _cmap);
 	}
 	data->seek(32, SEEK_CUR); // skip name
 	data->seek(4, SEEK_CUR);
@@ -153,7 +186,7 @@ void Model::loadText(TextSplitter *ts) {
 
 		ts->scanString("%d: %32s", 2, &num, materialName);
 		strcpy(_materialNames[num], materialName);
-		loadMaterial(num);
+		loadMaterial(num, _cmap);
 	}
 
 	ts->expectString("section: geometrydef");
@@ -224,32 +257,32 @@ ModelNode *Model::getHierarchy() const {
 }
 
 void Model::reload(CMap *cmap) {
-	_cmap = cmap;
 	// Load the new colormap
 	for (int i = 0; i < _numMaterials; i++) {
-		loadMaterial(i);
+		loadMaterial(i, cmap);
 	}
 	for (int i = 0; i < _numGeosets; i++)
 		_geosets[i].changeMaterials(_materials);
+	_cmap = cmap;
 }
 
-void Model::loadMaterial(int index) {
+void Model::loadMaterial(int index, CMap *cmap) {
 	Material *mat = NULL;
 	if (!_materialsShared[index]) {
 		mat = _materials[index];
 	}
 	_materials[index] = NULL;
 	if (_parent) {
-		_materials[index] = _parent->findMaterial(_materialNames[index], _cmap);
+		_materials[index] = _parent->findMaterial(_materialNames[index], cmap);
 		if (_materials[index]) {
 			_materialsShared[index] = true;
 		}
 	}
 	if (!_materials[index]) {
-		if (mat && _cmap->getFilename() == _cmap->getFilename()) {
+		if (mat && cmap->getFilename() == _cmap->getFilename()) {
 			_materials[index] = mat;
 		} else {
-			_materials[index] = g_resourceloader->loadMaterial(_materialNames[index], _cmap);
+			_materials[index] = g_resourceloader->loadMaterial(_materialNames[index], cmap);
 		}
 		_materialsShared[index] = false;
 	}

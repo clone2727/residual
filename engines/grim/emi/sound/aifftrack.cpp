@@ -30,8 +30,10 @@
 
 namespace Grim {
 
-AIFFTrack::AIFFTrack(Audio::Mixer::SoundType soundType) {
+AIFFTrack::AIFFTrack(Audio::Mixer::SoundType soundType, DisposeAfterUse::Flag disposeOfStream) {
 	_soundType = soundType;
+	_looping = false;
+	_disposeAfterPlaying = disposeOfStream;
 }
 
 AIFFTrack::~AIFFTrack() {
@@ -42,24 +44,29 @@ AIFFTrack::~AIFFTrack() {
 bool AIFFTrack::openSound(Common::String soundName, Common::SeekableReadStream *file) {
 	if (!file) {
 		warning("Stream for %s not open", soundName.c_str());
-		//return false;
+		return false;
 	}
 	_soundName = soundName;
 	_stream = Audio::makeAIFFStream(file, DisposeAfterUse::NO);
+	if (!_stream)
+		return false;
 	_handle = new Audio::SoundHandle();
 	return true;
 }
 
 void AIFFTrack::setLooping(bool looping) {
-	if (looping) {
-		_stream = Audio::makeLoopingAudioStream(dynamic_cast<Audio::SeekableAudioStream *>(_stream), 0);
+	if (_looping == looping)
+		return;
+	_looping = looping;
+	if (looping && _stream) {
+		_stream = Audio::makeLoopingAudioStream(static_cast<Audio::SeekableAudioStream *>(_stream), 0);
 	}
 }
 
 bool AIFFTrack::play() {
 	if (_stream) {
-		Audio::SeekableAudioStream *stream = dynamic_cast<Audio::SeekableAudioStream *>(_stream);
-		if (stream) {
+		Audio::RewindableAudioStream *stream = static_cast<Audio::RewindableAudioStream *>(_stream);
+		if (!_looping) {
 			stream->rewind();
 		}
 		return SoundTrack::play();

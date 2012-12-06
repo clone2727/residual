@@ -30,7 +30,7 @@
 
 namespace Grim {
 
-EMISkelComponent::EMISkelComponent(Component *p, int parentID, const char *filename, Component *prevComponent, tag32 t) : Component(p, parentID, t), _filename(filename), _obj(NULL), _parentModel(NULL) {
+EMISkelComponent::EMISkelComponent(Component *p, int parentID, const char *filename, Component *prevComponent, tag32 t) : Component(p, parentID, filename, t), _obj(NULL), _parentModel(NULL) {
 }
 
 EMISkelComponent::~EMISkelComponent() {
@@ -39,12 +39,12 @@ EMISkelComponent::~EMISkelComponent() {
 
 void EMISkelComponent::init() {
 	_visible = true;
-	_obj = g_resourceloader->loadSkeleton(_filename);
+	_obj = g_resourceloader->loadSkeleton(_name);
 }
 
 int EMISkelComponent::update(uint time) {
 	if (_obj) {
-		_obj->animate(time/1000.f);
+		_obj->animate(time);
 	}
 	return 0;
 }

@@ -27,7 +27,7 @@
 
 namespace Grim {
 
-EMISpriteComponent::EMISpriteComponent(Component *p, int parentID, const char *filename, Component *prevComponent, tag32 t) : Component(p, parentID, t), _filename(filename), _sprite(NULL) {
+EMISpriteComponent::EMISpriteComponent(Component *p, int parentID, const char *filename, Component *prevComponent, tag32 t) : Component(p, parentID, filename, t), _sprite(NULL) {
 }
 
 EMISpriteComponent::~EMISpriteComponent() {
@@ -35,31 +35,7 @@ EMISpriteComponent::~EMISpriteComponent() {
 }
 
 void EMISpriteComponent::init() {
-
-	// FIXME: this code should probably go into a sprite class.
-	Common::SeekableReadStream *stream = g_resourceloader->openNewStreamFile(_filename+"b");
-	if (!stream)
-		return;
-	uint32 namelength = stream->readUint32LE();
-	char *name = new char[namelength];
-	stream->read(name, namelength);
-	delete[] name;
-	stream->seek(40, SEEK_CUR);
-	uint32 texnamelength = stream->readUint32LE();
-	char *texname = new char[texnamelength];
-	stream->read(texname, texnamelength);
-
-	_sprite = new Sprite();
-	_sprite->_material = g_resourceloader->loadMaterial(texname, 0);
-	_sprite->_height = 0.5;
-	_sprite->_width = 0.5;
-	_sprite->_next = 0;
-	_sprite->_visible = true;
-	_sprite->_pos.set(0.5, 0.5, 0.5);
-
-	delete[] texname;
-	delete stream;
-
+	_sprite = g_resourceloader->loadSprite(_name);
 }
 
 int EMISpriteComponent::update(uint time) {
@@ -70,6 +46,9 @@ void EMISpriteComponent::reset() {
 }
 
 void EMISpriteComponent::draw() {
+	// HACK: don't draw _masks for now.
+	if (_name.contains("_mask"))
+		return;
 	if (_sprite) {
 		_sprite->draw();
 	}

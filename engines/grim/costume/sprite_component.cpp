@@ -32,7 +32,7 @@
 namespace Grim {
 
 SpriteComponent::SpriteComponent(Component *p, int parentID, const char *filename, tag32 t) :
-	Component(p, parentID, t), _filename(filename), _sprite(NULL) {
+	Component(p, parentID, filename, t), _sprite(NULL) {
 
 }
 
@@ -41,9 +41,12 @@ SpriteComponent::~SpriteComponent() {
 		if (_parent) {
 			MeshComponent *mc = static_cast<MeshComponent *>(_parent);
 			if (mc) {
-				ModelComponent *mdlc = dynamic_cast<ModelComponent *>(mc->getParent());
-				if (mdlc && mdlc->getHierarchy())
-					mc->getNode()->removeSprite(_sprite);
+				if (mc->getParent()->isComponentType('M','M','D','L') ||
+					mc->getParent()->isComponentType('M','O','D','L')) {
+					ModelComponent *mdlc = static_cast<ModelComponent *>(mc->getParent());
+					if (mdlc->getHierarchy())
+						mc->getNode()->removeSprite(_sprite);
+				}
 			}
 		}
 		delete _sprite->_material;
@@ -52,9 +55,9 @@ SpriteComponent::~SpriteComponent() {
 }
 
 void SpriteComponent::init() {
-	const char *comma = strchr(_filename.c_str(), ',');
+	const char *comma = strchr(_name.c_str(), ',');
 
-	Common::String name(_filename.c_str(), comma);
+	Common::String name(_name.c_str(), comma);
 
 	if (_sprite) {
 		if (_parent) {
@@ -78,11 +81,11 @@ void SpriteComponent::init() {
 		_sprite->_next = NULL;
 
 		if (_parent) {
-			MeshComponent *mc = dynamic_cast<MeshComponent *>(_parent);
-			if (mc)
+			if (_parent->isComponentType('M','E','S','H')) {
+				MeshComponent *mc = static_cast<MeshComponent *>(_parent);
 				mc->getNode()->addSprite(_sprite);
-			else
-				Debug::warning(Debug::Costumes, "Parent of sprite %s wasn't a mesh", _filename.c_str());
+			} else
+				Debug::warning(Debug::Costumes, "Parent of sprite %s wasn't a mesh", _name.c_str());
 		}
 	}
 }

@@ -11,6 +11,7 @@ MODULE_OBJS := \
 	midi/alsa.o \
 	midi/dmedia.o \
 	midi/seq.o \
+	midi/sndio.o \
 	midi/stmidi.o \
 	midi/timidity.o \
 	saves/savefile.o \
@@ -98,9 +99,8 @@ endif
 ifdef AMIGAOS
 MODULE_OBJS += \
 	fs/amigaos4/amigaos4-fs.o \
-	fs/amigaos4/amigaos4-fs-factory.o
-#ResidualVM: disabled below
-#	midi/camd.o
+	fs/amigaos4/amigaos4-fs-factory.o \
+	midi/camd.o
 endif
 
 ifdef PLAYSTATION3

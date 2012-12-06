@@ -20,14 +20,8 @@
  *
  */
 
-#define FORBIDDEN_SYMBOL_EXCEPTION_setjmp
-#define FORBIDDEN_SYMBOL_EXCEPTION_longjmp
 #define FORBIDDEN_SYMBOL_EXCEPTION_fprintf
 #define FORBIDDEN_SYMBOL_EXCEPTION_fgetc
-#define FORBIDDEN_SYMBOL_EXCEPTION_chdir
-#define FORBIDDEN_SYMBOL_EXCEPTION_getcwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_getwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_unlink
 #define FORBIDDEN_SYMBOL_EXCEPTION_stderr
 #define FORBIDDEN_SYMBOL_EXCEPTION_stdin
 
@@ -50,6 +44,7 @@
 #include "engines/grim/lua.h"
 #include "engines/grim/lua_v1.h"
 #include "engines/grim/emi/lua_v2.h"
+#include "engines/grim/emi/poolsound.h"
 #include "engines/grim/actor.h"
 #include "engines/grim/movie/movie.h"
 #include "engines/grim/savegame.h"
@@ -117,7 +112,7 @@ GrimEngine::GrimEngine(OSystem *syst, uint32 gameFlags, GrimGameType gameType, C
 	_flipEnable = true;
 	int speed = g_registry->getInt("engine_speed");
 	if (speed <= 0 || speed > 100)
-		_speedLimitMs = 30;
+		_speedLimitMs = 1000 / 60;
 	else
 		_speedLimitMs = 1000 / speed;
 	char buf[20];
@@ -279,24 +274,6 @@ Common::Error GrimEngine::run() {
 	lua->registerLua();
 
 	lua->loadSystemScript();
-	if (!lua->supportedVersion()) {
-		const char *errorMessage = 0;
-		if (g_grim->getGameType() == GType_GRIM)
-			errorMessage = 	"Unsupported version of Grim Fandango.\n"
-							"Please download the original patch from\n"
-							"http://www.residualvm.org/downloads/\n"
-							"and put it the game data files directory.";
-		else if (g_grim->getGameType() == GType_MONKEY4)
-			errorMessage = 	"Unsupported version of Escape from Monkey Island.\n"
-							"Please download the original patch from\n"
-							"http://www.residualvm.org/downloads/\n"
-							"and put it the game data files directory.\n"
-							"Pay attention to download the correct version according to the game's language.";
-
-		GUI::displayErrorDialog(errorMessage);
-		return Common::kNoError;
-	}
-	//Make sure that the localizer is initialized after the version is checked
 	g_localizer = new Localizer();
 	lua->boot();
 
@@ -507,9 +484,6 @@ void GrimEngine::updateDisplayScene() {
 		// There are a bunch of these, especially in the tube-switcher room
 		_currSet->drawBitmaps(ObjectState::OBJSTATE_BACKGROUND);
 
-		// Underlay objects are just above the background
-		_currSet->drawBitmaps(ObjectState::OBJSTATE_UNDERLAY);
-
 		// State objects are drawn on top of other things, such as the flag
 		// on Manny's message tube
 		_currSet->drawBitmaps(ObjectState::OBJSTATE_STATE);
@@ -532,6 +506,11 @@ void GrimEngine::updateDisplayScene() {
 				g_driver->releaseMovieFrame();
 		}
 
+		// Underlay objects must be drawn on top of movies
+		// Otherwise the lighthouse door will always be open as the underlay for
+		// the closed door will be overdrawn by a movie used as background image.
+		_currSet->drawBitmaps(ObjectState::OBJSTATE_UNDERLAY);
+
 		// Draw Primitives
 		foreach (PrimitiveObject *p, PrimitiveObject::getPool()) {
 			p->draw();
@@ -549,10 +528,23 @@ void GrimEngine::updateDisplayScene() {
 
 		// Draw actors
 		buildActiveActorsList();
-		foreach (Actor *a, _activeActors) {
-			if (a->isVisible())
-				a->draw();
+		if (g_grim->getGameType() == GType_GRIM) {
+			foreach (Actor *a, _activeActors) {
+				if (a->isVisible())
+					a->draw();
+			}
+		} else {
+			bool drewForeground = false;
+			foreach (Actor *a, _activeActors) {
+				if (a->getSortOrder() < 15 && !drewForeground) {
+					drewForeground = true;
+					_currSet->drawForeground();
+				}
+				if (a->isVisible() && a->getSortOrder() < 100)
+					a->draw();
+			}
 		}
+
 
 		flagRefreshShadowMask(false);
 
@@ -561,6 +553,7 @@ void GrimEngine::updateDisplayScene() {
 		// including 3D objects such as Manny and the message tube
 		_currSet->drawBitmaps(ObjectState::OBJSTATE_OVERLAY);
 
+		g_driver->drawCleanBuffer();
 		drawPrimitives();
 	} else if (_mode == DrawMode) {
 		_doFlip = false;
@@ -779,6 +772,11 @@ void GrimEngine::savegameRestore() {
 	Actor::getPool().restoreObjects(_savedState);
 	Debug::debug(Debug::Engine, "Actors restored succesfully.");
 
+	if (getGameType() == GType_MONKEY4) {
+		PoolSound::getPool().restoreObjects(_savedState);
+		Debug::debug(Debug::Engine, "Pool sounds saved succesfully.");
+	}
+
 	restoreGRIM();
 	Debug::debug(Debug::Engine, "Engine restored succesfully.");
 
@@ -875,11 +873,14 @@ void GrimEngine::storeSaveGameImage(SaveGame *state) {
 void GrimEngine::savegameSave() {
 	debug("GrimEngine::savegameSave() started.");
 	_savegameSaveRequest = false;
-	char filename[200];
+	Common::String filename;
 	if (_savegameFileName.size() == 0) {
-		strcpy(filename, "grim.sav");
+		filename = "grim.sav";
 	} else {
-		strcpy(filename, _savegameFileName.c_str());
+		filename = _savegameFileName;
+	}
+	if (getGameType() == GType_MONKEY4 && filename.contains('/')) {
+		filename = Common::lastPathComponent(filename, '/');
 	}
 	_savedState = SaveGame::openForSaving(filename);
 	if (!_savedState) {
@@ -915,6 +916,11 @@ void GrimEngine::savegameSave() {
 
 	Actor::getPool().saveObjects(_savedState);
 	Debug::debug(Debug::Engine, "Actors saved succesfully.");
+
+	if (getGameType() == GType_MONKEY4) {
+		PoolSound::getPool().saveObjects(_savedState);
+		Debug::debug(Debug::Engine, "Pool sounds saved succesfully.");
+	}
 
 	saveGRIM();
 	Debug::debug(Debug::Engine, "Engine saved succesfully.");
@@ -1076,6 +1082,11 @@ void GrimEngine::invalidateActiveActorsList() {
 	_buildActiveActorsList = true;
 }
 
+void GrimEngine::immediatelyRemoveActor(Actor *actor) {
+	_activeActors.remove(actor);
+	_talkingActors.remove(actor);
+}
+
 void GrimEngine::buildActiveActorsList() {
 	if (!_buildActiveActorsList) {
 		return;
@@ -1084,7 +1095,16 @@ void GrimEngine::buildActiveActorsList() {
 	_activeActors.clear();
 	foreach (Actor *a, Actor::getPool()) {
 		if ((_mode == NormalMode && a->isInSet(_currSet->getName())) || a->isInOverworld()) {
-			_activeActors.push_back(a);
+			if (getGameType() == GType_MONKEY4) {
+				Common::List<Actor *>::iterator it = _activeActors.begin();
+				for (; it != _activeActors.end(); ++it) {
+					if (a->getSortOrder() >= (*it)->getSortOrder())
+						break;
+				}
+				_activeActors.insert(it, a);
+			} else {
+				_activeActors.push_back(a);
+			}
 		}
 	}
 	_buildActiveActorsList = false;
@@ -1106,16 +1126,11 @@ bool GrimEngine::areActorsTalking() const {
 	return talking;
 }
 
-void GrimEngine::setMovieSubtitle(TextObject *to)
-{
+void GrimEngine::setMovieSubtitle(TextObject *to) {
 	if (_movieSubtitle != to) {
 		delete _movieSubtitle;
 		_movieSubtitle = to;
 	}
-}
-
-const Common::String &GrimEngine::getSetName() const {
-	return _currSet->getName();
 }
 
 void GrimEngine::clearEventQueue() {
@@ -1132,6 +1147,12 @@ bool GrimEngine::hasFeature(EngineFeature f) const {
 	return
 		(f == kSupportsRTL) ||
 		(f == kSupportsLoadingDuringRuntime);
+}
+
+void GrimEngine::openMainMenuDialog() {
+	Common::KeyState key(Common::KEYCODE_F1, Common::ASCII_F1);
+	handleControls(Common::EVENT_KEYDOWN, key);
+	handleControls(Common::EVENT_KEYUP, key);
 }
 
 } // end of namespace Grim

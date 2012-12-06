@@ -85,12 +85,7 @@ public:
 		// Iterate over all registered (static) plugins and load them.
 
 		// Engine plugins
-		#if PLUGIN_ENABLED_STATIC(GRIM)
-		LINK_PLUGIN(GRIM)
-		#endif
-		#if PLUGIN_ENABLED_STATIC(MYST3)
-		LINK_PLUGIN(MYST3)
-		#endif
+		#include "engines/plugins_table.h"
 
 		// Music plugins
 		// TODO: Use defines to disable or enable each MIDI driver as a
@@ -106,6 +101,9 @@ public:
 		#if defined(USE_SEQ_MIDI)
 		LINK_PLUGIN(SEQ)
 		#endif
+		#if defined(USE_SNDIO)
+		LINK_PLUGIN(SNDIO)
+		#endif
 		#if defined(__MINT__)
 		LINK_PLUGIN(STMIDI)
 		#endif
@@ -113,8 +111,7 @@ public:
 		LINK_PLUGIN(DMEDIA)
 		#endif
 		#if defined(__amigaos4__)
-//ResidualVM: disabled below
-//		LINK_PLUGIN(CAMD)
+		LINK_PLUGIN(CAMD)
 		#endif
 		#if defined(MACOSX)
 		LINK_PLUGIN(COREAUDIO)
@@ -126,18 +123,18 @@ public:
 		#ifdef USE_MT32EMU
 		LINK_PLUGIN(MT32)
 		#endif
-		#if defined(__ANDROID__)
-		LINK_PLUGIN(EAS)
-		#endif
 		LINK_PLUGIN(ADLIB)
 //ResidualVM: disabled belows
 //		LINK_PLUGIN(PCSPK)
 //		LINK_PLUGIN(PCJR)
-		LINK_PLUGIN(CMS)
+//		LINK_PLUGIN(CMS)
+		#if defined(__ANDROID__)
+//		LINK_PLUGIN(EAS)
+		#endif
 		#ifndef DISABLE_SID
 //		LINK_PLUGIN(C64)
-		#endif
 //		LINK_PLUGIN(AMIGA)
+		#endif
 //		LINK_PLUGIN(APPLEIIGS)
 //		LINK_PLUGIN(TOWNS)
 //		LINK_PLUGIN(PC98)

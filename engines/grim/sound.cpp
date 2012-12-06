@@ -100,5 +100,25 @@ uint32 SoundPlayer::getMsPos(int stateId) {
 	assert(_emiSound); // This shouldn't ever be called from Grim.
 	return _emiSound->getMsPos(stateId);
 }
-	
+
+void SoundPlayer::selectMusicSet(int setId) {
+	assert(_emiSound);
+	return _emiSound->selectMusicSet(setId);
+}
+
+void SoundPlayer::pushState() {
+	assert(_emiSound); // This shouldn't ever be called from Grim.
+	return _emiSound->pushStateToStack();
+}
+
+void SoundPlayer::popState() {
+	assert(_emiSound); // This shouldn't ever be called from Grim.
+	return _emiSound->popStateFromStack();
+}
+
+void SoundPlayer::flushStack() {
+	assert(_emiSound); // This shouldn't ever be called from Grim.
+	return _emiSound->flushStack();
+}
+
 } // end of namespace Grim

@@ -28,6 +28,7 @@
 #include "engines/grim/color.h"
 #include "math/vector3d.h"
 #include "math/angle.h"
+#include "math/quat.h"
 
 namespace Grim {
 
@@ -465,16 +466,22 @@ public:
 	static void saveStaticState(SaveGame *state);
 	static void restoreStaticState(SaveGame *state);
 
-	bool isAttached() const { return _attachedActor != NULL; }
+	bool isAttached() const { return _attachedActor != 0; }
 	Math::Vector3d getWorldPos() const;
 	void attachToActor(Actor *other, const char *joint);
 	void detach();
+	Math::Quaternion getRotationQuat() const;
 
 	void setInOverworld(bool inOverworld) { _inOverworld = inOverworld; }
 	bool isInOverworld() { return _inOverworld; }
 
 	void setGlobalAlpha(float alpha) { _globalAlpha = alpha; }
 	void setAlphaMode(AlphaMode mode) { _alphaMode = mode; }
+
+	int getSortOrder() const { return _sortOrder; }
+	void setSortOrder(const int order) { _sortOrder = order; }
+
+	void activateShadow(bool active) { _shadowActive = active; }
 
 private:
 	void costumeMarkerCallback(int marker);
@@ -607,14 +614,16 @@ private:
 
 	static bool _isTalkingBackground;
 	int _talkDelay;
-	Actor *_attachedActor;
+	int _attachedActor;
 	Common::String _attachedJoint;
 	AlphaMode _alphaMode;
 	float _globalAlpha;
 
 	bool _inOverworld;
 
-	friend class GrimEngine;
+	int _sortOrder;
+
+	bool _shadowActive;
 };
 
 } // end of namespace Grim

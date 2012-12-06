@@ -43,9 +43,7 @@ public:
 private:
 	bool _hierShared;
 	Component *_parentModel;
-	Common::String _filename;
 	AnimationEmi *_obj;
-	friend class Costume;
 };
 
 } // end of namespace Grim

@@ -24,6 +24,7 @@
 #define GRIM_GFX_BASE_H
 
 #include "math/vector3d.h"
+#include "math/quat.h"
 
 #include "graphics/pixelformat.h"
 
@@ -70,7 +71,8 @@ enum colorFormat {
 	BM_RGB565 = 1,    // Grim Fandango
 	BM_RGB1555 = 2,   // EMI-PS2
 	BM_RGBA = 3,      // EMI-PC (Also internal Material-format for Grim)
-	BM_BGR888 = 4	  // EMI-TGA-materials (888)
+	BM_BGR888 = 4,    // EMI-TGA-materials (888)
+	BM_BGRA = 5       // EMI-TGA-materials with alpha
 };
 class GfxBase {
 public:
@@ -102,7 +104,7 @@ public:
 	virtual uint getScreenHeight() { return _screenHeight; }
 
 	virtual void setupCamera(float fov, float nclip, float fclip, float roll) = 0;
-	virtual void positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest) = 0;
+	virtual void positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest, float roll) = 0;
 
 	virtual void clearScreen() = 0;
 
@@ -112,9 +114,8 @@ public:
 	virtual void flipBuffer() = 0;
 
 	virtual void getBoundingBoxPos(const Mesh *mesh, int *x1, int *y1, int *x2, int *y2) = 0;
-	virtual void startActorDraw(const Math::Vector3d &pos, float scale, const Math::Angle &yaw,
-								const Math::Angle &pitch, const Math::Angle &roll, const bool inOverworld,
-								const float alpha) = 0;
+	virtual void startActorDraw(const Math::Vector3d &pos, float scale, const Math::Quaternion &quat,
+	                            const bool inOverworld, const float alpha) = 0;
 
 	virtual void finishActorDraw() = 0;
 	virtual void setShadow(Shadow *shadow) = 0;
@@ -168,7 +169,7 @@ public:
 	 * @see createBitmap
 	 * @see destroyBitmap
 	 */
-	virtual void drawBitmap(const Bitmap *bitmap, int x, int y) = 0;
+	virtual void drawBitmap(const Bitmap *bitmap, int x, int y, bool initialDraw = true) = 0;
 
 	/**
 	 * Deletes any internal references and representations of a bitmap
@@ -185,7 +186,7 @@ public:
 	virtual void destroyFont(Font *font) = 0;
 
 	virtual void createTextObject(TextObject *text) = 0;
-	virtual void drawTextObject(TextObject *text) = 0;
+	virtual void drawTextObject(const TextObject *text) = 0;
 	virtual void destroyTextObject(TextObject *text) = 0;
 
 	virtual Bitmap *getScreenshot(int w, int h) = 0;
@@ -199,6 +200,7 @@ public:
 	 */
 	virtual void dimScreen() = 0;
 	virtual void dimRegion(int x, int y, int w, int h, float level) = 0;
+	virtual void setDimLevel(float dimLevel) { _dimLevel = dimLevel; }
 
 	/**
 	 * Draw a completely opaque Iris around the specified rectangle.
@@ -213,9 +215,9 @@ public:
 	virtual void drawEmergString(int x, int y, const char *text, const Color &fgColor) = 0;
 	virtual void loadEmergFont() = 0;
 
-	virtual void drawRectangle(PrimitiveObject *primitive) = 0;
-	virtual void drawLine(PrimitiveObject *primitive) = 0;
-	virtual void drawPolygon(PrimitiveObject *primitive) = 0;
+	virtual void drawRectangle(const PrimitiveObject *primitive) = 0;
+	virtual void drawLine(const PrimitiveObject *primitive) = 0;
+	virtual void drawPolygon(const PrimitiveObject *primitive) = 0;
 
 	/**
 	 * Prepare a movie-frame for drawing
@@ -249,6 +251,7 @@ public:
 	virtual void selectScreenBuffer() {}
 	virtual void selectCleanBuffer() {}
 	virtual void clearCleanBuffer() {}
+	virtual void drawCleanBuffer() {}
 
 	virtual void createSpecialtyTextures() = 0;
 	virtual Material *getSpecialtyTexture(int n) { return &_specialty[n]; }
@@ -268,6 +271,9 @@ protected:
 	bool _shadowModeActive;
 	Graphics::PixelFormat _pixelFormat;
 	SpecialtyMaterial _specialty[8];
+	Math::Vector3d _currentPos;
+	Math::Quaternion _currentQuat;
+	float _dimLevel;
 };
 
 // Factory-like functions:

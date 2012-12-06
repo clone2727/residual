@@ -20,13 +20,6 @@
  *
  */
 
-#define FORBIDDEN_SYMBOL_EXCEPTION_printf
-#define FORBIDDEN_SYMBOL_EXCEPTION_chdir
-#define FORBIDDEN_SYMBOL_EXCEPTION_getcwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_getwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_mkdir
-#define FORBIDDEN_SYMBOL_EXCEPTION_unlink
-
 #include "math/line3d.h"
 #include "math/rect2d.h"
 
@@ -75,8 +68,9 @@ Actor::Actor(const Common::String &actorName) :
 		_walkedLast(false), _walkedCur(false),
 		_lastTurnDir(0), _currTurnDir(0),
 		_sayLineText(0), _talkDelay(0),
-		_attachedActor(NULL), _attachedJoint(""),
-		_globalAlpha(1.f), _alphaMode(AlphaOff)  {
+		_attachedActor(0), _attachedJoint(""),
+		_globalAlpha(1.f), _alphaMode(AlphaOff),
+		_shadowActive(false) {
 	_lookingMode = false;
 	_constrain = false;
 	_talkSoundName = "";
@@ -91,6 +85,7 @@ Actor::Actor(const Common::String &actorName) :
 	_puckOrient = false;
 	_talking = false;
 	_inOverworld = false;
+	_sortOrder = 0;
 
 	for (int i = 0; i < MAX_SHADOWS; i++) {
 		_shadowArray[i].active = false;
@@ -111,11 +106,14 @@ Actor::Actor() {
 	_collisionScale = 1.f;
 	_inOverworld = false;
 
-	_attachedActor = NULL;
+	_attachedActor = 0;
 	_attachedJoint = "";
 
 	_alphaMode = AlphaOff;
 	_globalAlpha = 1.f;
+
+	_sortOrder = 0;
+	_shadowActive = false;
 
 	for (int i = 0; i < MAX_SHADOWS; i++) {
 		_shadowArray[i].active = false;
@@ -246,6 +244,18 @@ void Actor::saveState(SaveGame *savedState) const {
 	savedState->writeLEUint32(_path.size());
 	for (Common::List<Math::Vector3d>::const_iterator i = _path.begin(); i != _path.end(); ++i) {
 		savedState->writeVector3d(*i);
+	}
+
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		savedState->writeByte(_alphaMode);
+		savedState->writeFloat(_globalAlpha);
+	
+		savedState->writeBool(_inOverworld);
+		savedState->writeLESint32(_sortOrder);
+		savedState->writeBool(_shadowActive);
+
+		savedState->writeLESint32(_attachedActor);
+		savedState->writeString(_attachedJoint);
 	}
 }
 
@@ -382,6 +392,18 @@ bool Actor::restoreState(SaveGame *savedState) {
 	size = savedState->readLEUint32();
 	for (uint32 i = 0; i < size; ++i) {
 		_path.push_back(savedState->readVector3d());
+	}
+
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		_alphaMode = (AlphaMode) savedState->readByte();
+		_globalAlpha = savedState->readFloat();
+	
+		_inOverworld  = savedState->readBool();
+		_sortOrder    = savedState->readLESint32();
+		_shadowActive = savedState->readBool();
+
+		_attachedActor = savedState->readLESint32();
+		_attachedJoint = savedState->readString();
 	}
 
 	return true;
@@ -673,6 +695,14 @@ void Actor::walkForward() {
 			// Check for an adjacent sector which can continue
 			// the path
 			currSector = g_grim->getCurrSet()->findPointSector(ei.exitPoint + (float)0.0001 * puckVec, Sector::WalkType);
+
+			// EMI: some sectors are significantly higher/lower than others.
+			if (currSector && g_grim->getGameType() == GType_MONKEY4) {
+				float planeDist = currSector->distanceToPoint(_pos);
+				if (fabs(planeDist) < 1.f)
+					_pos -= planeDist * currSector->getNormal();
+			}
+
 			if (currSector == prevSector || currSector == startSector)
 				break;
 		}
@@ -710,7 +740,7 @@ Math::Vector3d Actor::getSimplePuckVector() const {
 Math::Vector3d Actor::getPuckVector() const {
 	Math::Vector3d forwardVec = getSimplePuckVector();
 
-	Set * currSet = g_grim->getCurrSet();
+	Set *currSet = g_grim->getCurrSet();
 	if (!currSet)
 		return forwardVec;
 
@@ -849,11 +879,13 @@ void Actor::sayLine(const char *msgId, bool background) {
 
 	Common::String soundName = id;
 
-	if (g_grim->getGameType() == GType_GRIM)
+	if (g_grim->getGameType() == GType_GRIM) {
 		soundName += ".wav";
-	else
+	} else if (g_grim->getGameType() == GType_MONKEY4 && g_grim->getGamePlatform() == Common::kPlatformPS2) {
+		soundName += ".scx";
+	} else {
 		soundName += ".wVC";
-
+	}
 	if (_talkSoundName == soundName)
 		return;
 
@@ -990,7 +1022,10 @@ void Actor::pushCostume(const char *n) {
 	Costume *newCost = g_resourceloader->loadCostume(n, getCurrentCostume());
 
 	newCost->setColormap(NULL);
-	_costumeStack.push_back(newCost);
+	if (Common::String("fx/dumbshadow.cos").equals(n))
+		_costumeStack.push_front(newCost);
+	else
+		_costumeStack.push_back(newCost);
 }
 
 void Actor::setColormap(const char *map) {
@@ -1254,7 +1289,7 @@ bool Actor::updateTalk(uint frameTime) {
 		if (m == GrimEngine::TextOnly && !textObject) {
 			shutUp();
 			return false;
-		} else if (m != GrimEngine::TextOnly && (strlen(_talkSoundName.c_str()) == 0 || !g_sound->getSoundStatus(_talkSoundName.c_str()))) {
+		} else if (m != GrimEngine::TextOnly && (_talkSoundName.empty() || !g_sound->getSoundStatus(_talkSoundName.c_str()))) {
 			_talkDelay -= frameTime;
 			if (_talkDelay <= 0) {
 				_talkDelay = 0;
@@ -1284,8 +1319,9 @@ void Actor::draw() {
 		}
 	}
 
-	// FIXME: if isAttached(), factor in the joint & actor rotation as well.
+	// FIXME: if isAttached(), factor in the joint rotation as well.
 	Math::Vector3d absPos = getWorldPos();
+	const Math::Quaternion rot = getRotationQuat();
 	if (!_costumeStack.empty()) {
 		g_grim->getCurrSet()->setupLights(absPos);
 
@@ -1297,17 +1333,20 @@ void Actor::draw() {
 			g_driver->setShadowMode();
 			if (g_driver->isHardwareAccelerated())
 				g_driver->drawShadowPlanes();
-			g_driver->startActorDraw(absPos, _scale, _yaw, _pitch, _roll, _inOverworld, _alphaMode != AlphaOff ? _globalAlpha : 1.f);
+			g_driver->startActorDraw(absPos, _scale, rot, _inOverworld, _alphaMode != AlphaOff ? _globalAlpha : 1.f);
 			costume->draw();
 			g_driver->finishActorDraw();
 			g_driver->clearShadowMode();
 			g_driver->setShadow(NULL);
 		}
 
-		// normal draw actor
-		g_driver->startActorDraw(absPos, _scale, _yaw, _pitch, _roll, _inOverworld, _alphaMode != AlphaOff ? _globalAlpha : 1.f);
-		costume->draw();
-		g_driver->finishActorDraw();
+		bool isShadowCostume = costume->getFilename().equals("fx/dumbshadow.cos");
+		if (!isShadowCostume || (isShadowCostume && _costumeStack.size() > 1 && _shadowActive)) {
+			// normal draw actor
+			g_driver->startActorDraw(absPos, _scale, rot, _inOverworld, _alphaMode != AlphaOff ? _globalAlpha : 1.f);
+			costume->draw();
+			g_driver->finishActorDraw();
+		}
 	}
 
 	if (_mustPlaceText) {
@@ -1315,7 +1354,7 @@ void Actor::draw() {
 		x1 = y1 = 1000;
 		x2 = y2 = -1000;
 		if (!_costumeStack.empty()) {
-			g_driver->startActorDraw(absPos, _scale, _yaw, _pitch, _roll, _inOverworld, 1.f);
+			g_driver->startActorDraw(absPos, _scale, rot, _inOverworld, 1.f);
 			_costumeStack.back()->getBoundingBox(&x1, &y1, &x2, &y2);
 			g_driver->finishActorDraw();
 		}
@@ -1361,17 +1400,26 @@ bool Actor::shouldDrawShadow(int shadowId) {
 	if (!shadow->active)
 		return false;
 
-	// Don't draw a shadow if the actor is behind the shadow plane.
+	// Don't draw a shadow if the shadow caster and the actor are on different sides
+	// of the the shadow plane.
 	Sector *sector = shadow->planeList.front().sector;
 	Math::Vector3d n = sector->getNormal();
 	Math::Vector3d p = sector->getVertices()[0];
 	float d = -(n.x() * p.x() + n.y() * p.y() + n.z() * p.z());
 
 	p = getPos();
-	if (n.x() * p.x() + n.y() * p.y() + n.z() * p.z() + d < 0.f)
-		return true;
+	// Move the tested point a bit above ground level.
+	if (g_grim->getGameType() == GType_MONKEY4)
+		p.y() += 0.01f;
 	else
-		return false;
+		p.z() += 0.01f;
+	bool actorSide = n.x() * p.x() + n.y() * p.y() + n.z() * p.z() + d < 0.f;
+	p = shadow->pos;
+	bool shadowSide = n.x() * p.x() + n.y() * p.y() + n.z() * p.z() + d < 0.f;
+
+	if (actorSide == shadowSide)
+		return true;
+	return false;
 }
 
 void Actor::addShadowPlane(const char *n) {
@@ -1679,18 +1727,18 @@ Math::Vector3d Actor::getWorldPos() const {
 	if (! isAttached())
 		return getPos();
 
-	EMICostume * cost = dynamic_cast<EMICostume *>(_attachedActor->getCurrentCostume());
-	assert(cost != NULL);
-
-	Math::Matrix4 attachedToWorld;
-	attachedToWorld.setPosition(_attachedActor->getPos());
-	attachedToWorld.buildFromPitchYawRoll(_attachedActor->getPitch(), _attachedActor->getYaw(), _attachedActor->getRoll());
+	Actor *attachedActor = Actor::getPool().getObject(_attachedActor);
+	Math::Quaternion q = attachedActor->getRotationQuat();
+	Math::Matrix4 attachedToWorld = q.toMatrix();
+	attachedToWorld.transpose();
+	attachedToWorld.setPosition(attachedActor->getPos());
 
 	// If we were attached to a joint, factor in the joint's position & rotation,
 	// relative to its actor.
-	if (cost->_emiSkel && cost->_emiSkel->_obj) {
-		Joint * j = cost->_emiSkel->_obj->getJointNamed(_attachedJoint);
-		const Math::Matrix4 & jointToAttached = j->_finalMatrix;
+	EMICostume *cost = static_cast<EMICostume *>(attachedActor->getCurrentCostume());
+	if (cost && cost->_emiSkel && cost->_emiSkel->_obj) {
+		Joint *j = cost->_emiSkel->_obj->getJointNamed(_attachedJoint);
+		const Math::Matrix4 &jointToAttached = j->_finalMatrix;
 		attachedToWorld = attachedToWorld * jointToAttached;
 	}
 
@@ -1699,32 +1747,49 @@ Math::Vector3d Actor::getWorldPos() const {
 	return myPos;
 }
 
+Math::Quaternion Actor::getRotationQuat() const {
+	if (g_grim->getGameType() == GType_MONKEY4) {
+		Math::Quaternion ret = Math::Quaternion::fromEuler(_yaw, _pitch, _roll);
+		if (isAttached()) {
+			Actor *attachedActor = Actor::getPool().getObject(_attachedActor);
+			ret = ret * attachedActor->getRotationQuat();
+		}
+		return ret;
+	} else {
+		return Math::Quaternion::fromEuler(_pitch, _roll, -_yaw);
+	}
+}
+
 void Actor::attachToActor(Actor *other, const char *joint) {
 	assert(other != NULL);
-	if (other == _attachedActor)
+	if (other->getId() == _attachedActor)
 		return;
-	if (_attachedActor != NULL)
+	if (_attachedActor != 0)
 		detach();
 
-	EMICostume * cost = dynamic_cast<EMICostume *>(other->getCurrentCostume());
-	assert(cost != NULL);
-
 	Common::String jointStr = joint ? joint : "";
+
+	EMICostume *cost = static_cast<EMICostume *>(other->getCurrentCostume());
 	// If 'other' has a skeleton, check if it has the joint.
 	// Some models (pile o' boulders) don't have a skeleton,
 	// so we don't make the check in that case.
-	if (cost->_emiSkel && cost->_emiSkel->_obj)
+	if (cost && cost->_emiSkel && cost->_emiSkel->_obj)
 		assert(cost->_emiSkel->_obj->hasJoint(jointStr));
 
-	_attachedActor = other;
+	_attachedActor = other->getId();
 	_attachedJoint = jointStr;
 }
 
 void Actor::detach() {
-	if (_attachedActor != NULL) {
-		_attachedJoint = "";
-		_attachedActor = NULL;
-	}
+	if (!isAttached())
+		return;
+	
+	// FIXME: Use last known position of attached joint
+	Actor *attachedActor = Actor::getPool().getObject(_attachedActor);
+	setPos(attachedActor->_pos);
+	setRot(0, 0, 0);
+	_attachedActor = 0;
+	_attachedJoint = "";
 }
 
 unsigned const int Actor::Chore::fadeTime = 150;

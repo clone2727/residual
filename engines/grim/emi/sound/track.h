@@ -45,12 +45,15 @@ protected:
 	Audio::AudioStream *_stream;
 	Audio::SoundHandle *_handle;
 	Audio::Mixer::SoundType _soundType;
+	DisposeAfterUse::Flag _disposeAfterPlaying;
+	bool _paused;
 public:
 	SoundTrack();
-	virtual ~SoundTrack() { };
+	virtual ~SoundTrack();
 	virtual bool openSound(Common::String voiceName, Common::SeekableReadStream *file) = 0;
 	virtual bool isPlaying() = 0;
 	virtual bool play();
+	virtual void pause();
 	virtual void stop();
 	Audio::SoundHandle *getHandle() { return _handle; }
 	Common::String getSoundName();

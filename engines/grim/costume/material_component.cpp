@@ -33,27 +33,27 @@ namespace Grim {
 
 
 MaterialComponent::MaterialComponent(Component *p, int parentID, const char *filename, tag32 t) :
-		Component(p, parentID, t), _filename(filename) {
+		Component(p, parentID, filename, t) {
 
 	Debug::debug(Debug::Costumes, "Constructing MaterialComponent %s", filename);
 }
 
 void MaterialComponent::init() {
 	_mat = NULL;
-	if (FROM_BE_32(_parent->getTag()) == MKTAG('M','M','D','L') ||
-		FROM_BE_32(_parent->getTag()) == MKTAG('M','O','D','L')) {
+	if (_parent->isComponentType('M','M','D','L') ||
+		_parent->isComponentType('M','O','D','L')) {
 		ModelComponent *p = static_cast<ModelComponent *>(_parent);
 		Model *model = p->getModel();
 		if (model) {
 			for (int i = 0; i < model->_numMaterials; ++i) {
-				if (_filename.compareToIgnoreCase(model->_materials[i]->getFilename()) == 0) {
+				if (_name.compareToIgnoreCase(model->_materials[i]->getFilename()) == 0) {
 					_mat = model->_materials[i];
 					return;
 				}
 			}
 		}
 	} else {
-		warning("Parent of a MaterialComponent not a ModelComponent. %s %s", _filename.c_str(), _cost->getFilename().c_str());
+		warning("Parent of a MaterialComponent not a ModelComponent. %s %s", _name.c_str(), _cost->getFilename().c_str());
 	}
 }
 

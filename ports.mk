@@ -8,6 +8,22 @@
 #
 install:
 	$(INSTALL) -d "$(DESTDIR)$(bindir)"
+	$(INSTALL) -c -m 755 "./$(EXECUTABLE)" "$(DESTDIR)$(bindir)/$(EXECUTABLE)"
+	$(INSTALL) -d "$(DESTDIR)$(mandir)/man6/"
+	$(INSTALL) -c -m 644 "$(srcdir)/dists/residualvm.6" "$(DESTDIR)$(mandir)/man6/residualvm.6"
+	$(INSTALL) -d "$(DESTDIR)$(datarootdir)/pixmaps/"
+	$(INSTALL) -c -m 644 "$(srcdir)/icons/residualvm.xpm" "$(DESTDIR)$(datarootdir)/pixmaps/residualvm.xpm"
+	$(INSTALL) -d "$(DESTDIR)$(docdir)"
+	$(INSTALL) -c -m 644 $(DIST_FILES_DOCS) "$(DESTDIR)$(docdir)"
+	$(INSTALL) -d "$(DESTDIR)$(datadir)"
+	$(INSTALL) -c -m 644 $(DIST_FILES_THEMES) $(DIST_FILES_ENGINEDATA) "$(DESTDIR)$(datadir)/"
+ifdef DYNAMIC_MODULES
+	$(INSTALL) -d "$(DESTDIR)$(libdir)/residualvm/"
+	$(INSTALL) -c -m 644 $(PLUGINS) "$(DESTDIR)$(libdir)/residualvm/"
+endif
+
+install-strip:
+	$(INSTALL) -d "$(DESTDIR)$(bindir)"
 	$(INSTALL) -c -s -m 755 "./$(EXECUTABLE)" "$(DESTDIR)$(bindir)/$(EXECUTABLE)"
 	$(INSTALL) -d "$(DESTDIR)$(mandir)/man6/"
 	$(INSTALL) -c -m 644 "$(srcdir)/dists/residualvm.6" "$(DESTDIR)$(mandir)/man6/residualvm.6"
@@ -102,6 +118,12 @@ ifdef USE_FLAC
 OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libFLAC.a
 endif
 
+ifdef USE_FLUIDSYNTH
+OSX_STATIC_LIBS += \
+                -framework CoreAudio \
+                $(STATICLIBPATH)/lib/libfluidsynth.a
+endif
+
 ifdef USE_MAD
 OSX_STATIC_LIBS += $(STATICLIBPATH)/lib/libmad.a
 endif
@@ -163,9 +185,10 @@ osxsnap: bundle
 	cp $(srcdir)/COPYING.BSD ./ResidualVM-snapshot/License\ \(BSD\)
 	cp $(srcdir)/COPYING.LGPL ./ResidualVM-snapshot/License\ \(LGPL\)
 	cp $(srcdir)/COPYING.FREEFONT ./ResidualVM-snapshot/License\ \(FREEFONT\)
+	cp $(srcdir)/COPYING.ISC ./ResidualVM-snapshot/License\ \(ISC\)
 	cp $(srcdir)/COPYRIGHT ./ResidualVM-snapshot/Copyright\ Holders
 	cp $(srcdir)/NEWS ./ResidualVM-snapshot/News
-	cp $(srcdir)/README ./ResidualVM-snapshot/Residual\ ReadMe
+	cp $(srcdir)/README ./ResidualVM-snapshot/ResidualVM\ ReadMe
 	mkdir ResidualVM-snapshot/doc
 	cp $(srcdir)/doc/QuickStart ./ResidualVM-snapshot/doc/QuickStart
 	SetFile -t ttro -c ttxt ./ResidualVM-snapshot/*
@@ -246,6 +269,8 @@ endif
 	@cd $(srcdir)/dists/msvc9 && ../../devtools/create_project/create_project ../.. --msvc --msvc-version 9 >/dev/null && git add -f *.sln *.vcproj *.vsprops
 	@echo Creating MSVC10 project files...
 	@cd $(srcdir)/dists/msvc10 && ../../devtools/create_project/create_project ../.. --msvc --msvc-version 10 >/dev/null && git add -f *.sln *.vcxproj *.vcxproj.filters *.props
+	@echo Creating MSVC11 project files...
+	@cd $(srcdir)/dists/msvc11 && ../../devtools/create_project/create_project ../.. --msvc --msvc-version 11 >/dev/null && git add -f *.sln *.vcxproj *.vcxproj.filters *.props
 	@echo
 	@echo All is done.
 	@echo Now run
@@ -265,6 +290,7 @@ endif
 	cp $(srcdir)/COPYING.BSD ResidualVMWin32/COPYING.BSD.txt
 	cp $(srcdir)/COPYING.LGPL ResidualVMWin32/COPYING.LGPL.txt
 	cp $(srcdir)/COPYING.FREEFONT ResidualVMWin32/COPYING.FREEFONT.txt
+	cp $(srcdir)/COPYING.ISC ResidualVMWin32/COPYING.ISC.txt
 	cp $(srcdir)/COPYRIGHT ResidualVMWin32/COPYRIGHT.txt
 	cp $(srcdir)/NEWS ResidualVMWin32/NEWS.txt
 	cp $(srcdir)/doc/QuickStart ResidualVMWin32/doc/QuickStart.txt
@@ -282,8 +308,10 @@ endif
 # Special target to create an AmigaOS snapshot installation
 aos4dist: $(EXECUTABLE)
 	mkdir -p $(AOS4PATH)
+	mkdir -p $(AOS4PATH)/themes
+	mkdir -p $(AOS4PATH)/extras
 	$(STRIP) $(EXECUTABLE) -o $(AOS4PATH)/$(EXECUTABLE)
-	cp icons/residualvm.info $(AOS4PATH)/$(EXECUTABLE).info
+	cp ${srcdir}/icons/residualvm.info $(AOS4PATH)/$(EXECUTABLE).info
 	cp $(DIST_FILES_THEMES) $(AOS4PATH)/themes/
 ifdef DIST_FILES_ENGINEDATA
 	cp $(DIST_FILES_ENGINEDATA) $(AOS4PATH)/extras/
@@ -293,8 +321,10 @@ endif
 # Special target to cross create an AmigaOS snapshot installation
 aos4dist-cross: $(EXECUTABLE)
 	mkdir -p ResidualVM
-	$(STRIP) $(EXECUTABLE) -o ResidualVM/ResidualVM
-	cp icons/residualvm.info ResidualVM/ResidualVM.info
+	mkdir -p $(AOS4PATH)/themes
+	mkdir -p $(AOS4PATH)/extras
+	$(STRIP) $(EXECUTABLE) -o $(AOS4PATH)/$(EXECUTABLE)
+	cp ${srcdir}/icons/residualvm.info $(AOS4PATH)/$(EXECUTABLE).info
 	cp $(DIST_FILES_THEMES) ResidualVM
 ifdef DIST_FILES_ENGINEDATA
 	cp $(DIST_FILES_ENGINEDATA) ResidualVM
@@ -304,6 +334,7 @@ endif
 	cp $(srcdir)/COPYING.BSD ResidualVM/COPYING.BSD.txt
 	cp $(srcdir)/COPYING.LGPL ResidualVM/COPYING.LGPL.txt
 	cp $(srcdir)/COPYING.FREEFONT ResidualVM/COPYING.FREEFONT.txt
+	cp $(srcdir)/COPYING.ISC ResidualVM/COPYING.ISC.txt
 	cp $(srcdir)/COPYRIGHT ResidualVM/COPYRIGHT.txt
 	cp $(srcdir)/NEWS ResidualVM/NEWS.txt
 	cp $(srcdir)/doc/QuickStart ResidualVM/QuickStart.txt
@@ -328,7 +359,6 @@ endif
 	cp $(srcdir)/dists/ps3/readme-ps3.md ps3pkg/USRDIR/doc/
 	cp $(srcdir)/backends/vkeybd/packs/vkeybd_default.zip ps3pkg/USRDIR/data/
 	cp $(srcdir)/dists/ps3/ICON0.PNG ps3pkg/
-	cp $(srcdir)/dists/ps3/PIC1.PNG ps3pkg/
 	sfo.py -f $(srcdir)/dists/ps3/sfo.xml ps3pkg/PARAM.SFO
 	pkg.py --contentid UP0001-RESI12000_00-0000000000000000 ps3pkg/ residualvm-ps3.pkg
 	package_finalize residualvm-ps3.pkg

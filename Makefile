@@ -32,8 +32,8 @@ ifeq "$(HAVE_GCC)" "1"
 	# being helpful.
 	#CXXFLAGS+= -Wmissing-format-attribute
 
-	# Disable exceptions, ResidualVM use RTTI:
-	CXXFLAGS+= -fno-exceptions
+	# Disable RTTI and exceptions
+	CXXFLAGS+= -fno-rtti -fno-exceptions
 
 ifneq "$(HAVE_CLANG)" "1"
 	# enable checking of pointers returned by "new", but only when we do not
@@ -75,7 +75,7 @@ EXECUTABLE  := $(EXEPRE)residualvm$(EXEEXT)
 include $(srcdir)/Makefile.common
 
 # check if configure has been run or has been changed since last run
-config.h config.mk: $(srcdir)/configure
+config.h config.mk: $(srcdir)/configure $(srcdir)/engines/configure.engines
 ifeq "$(findstring config.mk,$(MAKEFILE_LIST))" "config.mk"
 	@echo "Running $(srcdir)/configure with the last specified parameters"
 	@sleep 2

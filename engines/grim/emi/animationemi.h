@@ -46,10 +46,11 @@ struct Bone {
 	int _b;
 	int _c;
 	int _count;
-	AnimRotation **_rotations;
-	AnimTranslation **_translations;
+	AnimRotation *_rotations;
+	AnimTranslation *_translations;
 	Bone() : _rotations(NULL), _translations(NULL), _boneName(""), _operation(0) {}
 	~Bone();
+	void loadBinary(Common::SeekableReadStream *data);
 };
 
 class AnimationEmi : public Object {
@@ -58,7 +59,7 @@ public:
 	Common::String _name;
 	float _duration;
 	int _numBones;
-	Bone **_bones;
+	Bone *_bones;
 	AnimationEmi(const Common::String &filename, Common::SeekableReadStream *data) : _name(""), _duration(0.0f), _numBones(0), _bones(NULL) { loadAnimation(data); }
 	~AnimationEmi();
 };

@@ -76,14 +76,6 @@ namespace {
 std::string unifyPath(const std::string &path);
 
 /**
- * Returns the last path component.
- *
- * @param path Path string.
- * @return Last path component.
- */
-std::string getLastPathComponent(const std::string &path);
-
-/**
  * Display the help text for the program.
  *
  * @param exe Name of the executable.
@@ -105,30 +97,6 @@ struct FSNode {
 };
 
 typedef std::list<FSNode> FileList;
-
-typedef StringList TokenList;
-
-/**
- * Takes a given input line and creates a list of tokens out of it.
- *
- * A token in this context is separated by whitespaces. A special case
- * are quotation marks though. A string inside quotation marks is treated
- * as single token, even when it contains whitespaces.
- *
- * Thus for example the input:
- * foo bar "1 2 3 4" ScummVM
- * will create a list with the following entries:
- * "foo", "bar", "1 2 3 4", "ScummVM"
- * As you can see the quotation marks will get *removed* too.
- *
- * You can also use this with non-whitespace by passing another separator
- * character (e.g. ',').
- *
- * @param input The text to be tokenized.
- * @param separator The token separator.
- * @return A list of tokens.
- */
-TokenList tokenize(const std::string &input, char separator = ' ');
 } // End of anonymous namespace
 
 enum ProjectType {
@@ -221,7 +189,7 @@ int main(int argc, char *argv[]) {
 
 			msvcVersion = atoi(argv[++i]);
 
-			if (msvcVersion != 8 && msvcVersion != 9 && msvcVersion != 10) {
+			if (msvcVersion != 8 && msvcVersion != 9 && msvcVersion != 10 && msvcVersion != 11) {
 				std::cerr << "ERROR: Unsupported version: \"" << msvcVersion << "\" passed to \"--msvc-version\"!\n";
 				return -1;
 			}
@@ -534,7 +502,7 @@ int main(int argc, char *argv[]) {
 		projectWarnings["agos"].push_back("4511");
 
 		projectWarnings["dreamweb"].push_back("4355");
-		
+
 		projectWarnings["lure"].push_back("4189");
 		projectWarnings["lure"].push_back("4355");
 
@@ -606,14 +574,6 @@ std::string unifyPath(const std::string &path) {
 	return result;
 }
 
-std::string getLastPathComponent(const std::string &path) {
-	std::string::size_type pos = path.find_last_of('/');
-	if (pos == std::string::npos)
-		return path;
-	else
-		return path.substr(pos + 1);
-}
-
 void displayHelp(const char *exe) {
 	using std::cout;
 
@@ -643,6 +603,7 @@ void displayHelp(const char *exe) {
 	        "                           8 stands for \"Visual Studio 2005\"\n"
 	        "                           9 stands for \"Visual Studio 2008\"\n"
 	        "                           10 stands for \"Visual Studio 2010\"\n"
+	        "                           11 stands for \"Visual Studio 2012\"\n"
 	        "                           The default is \"9\", thus \"Visual Studio 2008\"\n"
 	        " --build-events           Run custom build events as part of the build\n"
 	        "                          (default: false)\n"
@@ -654,14 +615,14 @@ void displayHelp(const char *exe) {
 	        "\n"
 	        "Engines settings:\n"
 	        " --list-engines           list all available engines and their default state\n"
-	        " --enable-engine          enable building of the engine with the name \"engine\"\n"
-	        " --disable-engine         disable building of the engine with the name \"engine\"\n"
+	        " --enable-engine=<name>   enable building of the engine with the name \"name\"\n"
+	        " --disable-engine=<name>  disable building of the engine with the name \"name\"\n"
 	        " --enable-all-engines     enable building of all engines\n"
 	        " --disable-all-engines    disable building of all engines\n"
 	        "\n"
 	        "Optional features settings:\n"
-	        " --enable-name            enable inclusion of the feature \"name\"\n"
-	        " --disable-name           disable inclusion of the feature \"name\"\n"
+	        " --enable-<name>          enable inclusion of the feature \"name\"\n"
+	        " --disable-<name>         disable inclusion of the feature \"name\"\n"
 	        "\n"
 	        " There are the following features available:\n"
 	        "\n";
@@ -693,7 +654,7 @@ bool parseEngine(const std::string &line, EngineDesc &engine);
 } // End of anonymous namespace
 
 EngineDescList parseConfigure(const std::string &srcDir) {
-	std::string configureFile = srcDir + "/configure";
+	std::string configureFile = srcDir + "/engines/configure.engines";
 
 	std::ifstream configure(configureFile.c_str());
 	if (!configure)
@@ -802,6 +763,7 @@ bool parseEngine(const std::string &line, EngineDesc &engine) {
 
 	return true;
 }
+} // End of anonymous namespace
 
 TokenList tokenize(const std::string &input, char separator) {
 	TokenList result;
@@ -834,7 +796,6 @@ TokenList tokenize(const std::string &input, char separator) {
 
 	return result;
 }
-} // End of anonymous namespace
 
 namespace {
 const Feature s_features[] = {
@@ -845,7 +806,8 @@ const Feature s_features[] = {
 	{    "flac",        "USE_FLAC", "libFLAC_static",   true, "FLAC support" },
 	{     "png",         "USE_PNG", "libpng",           false, "libpng support" },
 	{  "theora",   "USE_THEORADEC", "libtheora_static", false, "Theora decoding support" },
-	{   "mpeg2",       "USE_MPEG2", "libmpeg2",         true,  "mpeg2 codec for cutscenes" },
+	{"freetype",   "USE_FREETYPE2", "freetype",         true, "FreeType support" },
+	{   "mpeg2",       "USE_MPEG2", "libmpeg2",         true, "mpeg2 codec for cutscenes" },
 
 	// Feature flags
 	{        "bink",        "USE_BINK",         "", true, "Bink video support" },
@@ -1000,7 +962,7 @@ bool isInList(const std::string &dir, const std::string &fileName, const StringL
 				continue;
 		}
 
-		const std::string lastPathComponent = getLastPathComponent(*i);
+		const std::string lastPathComponent = ProjectProvider::getLastPathComponent(*i);
 		if (extensionName == "o") {
 			return false;
 		} else if (!producesObjectFile(fileName) && extensionName != "h") {
@@ -1227,6 +1189,8 @@ void ProjectProvider::createProject(const BuildSetup &setup) {
 		in.push_back(setup.srcDir + "/AUTHORS");
 		in.push_back(setup.srcDir + "/COPYING");
 		in.push_back(setup.srcDir + "/COPYING.LGPL");
+		in.push_back(setup.srcDir + "/COPYING.BSD");
+		in.push_back(setup.srcDir + "/COPYING.FREEFONT");
 		in.push_back(setup.srcDir + "/COPYRIGHT");
 		in.push_back(setup.srcDir + "/NEWS");
 		in.push_back(setup.srcDir + "/README");
@@ -1301,6 +1265,14 @@ std::string ProjectProvider::createUUID() const {
 
 	return uuidString.str();
 #endif
+}
+
+std::string ProjectProvider::getLastPathComponent(const std::string &path) {
+	std::string::size_type pos = path.find_last_of('/');
+	if (pos == std::string::npos)
+		return path;
+	else
+		return path.substr(pos + 1);
 }
 
 void ProjectProvider::addFilesToProject(const std::string &dir, std::ofstream &projectFile,

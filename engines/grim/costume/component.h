@@ -36,9 +36,8 @@ class SaveGame;
 
 class Component {
 public:
-	Component(Component *parent, int parentID, tag32 tag);
+	Component(Component *parent, int parentID, const char *name, tag32 tag);
 
-	tag32 getTag() { return _tag; }
 	CMap *getCMap();
 	virtual void setColormap(CMap *c);
 	bool isVisible();
@@ -57,6 +56,8 @@ public:
 	virtual void restoreState(SaveGame *) { }
 	virtual ~Component();
 
+	bool isComponentType(char a0, char a1, char a2, char a3) { return _tag == MKTAG(a0, a1, a2, a3); }
+
 protected:
 	ObjectPtr<CMap> _cmap, _previousCmap;
 	tag32 _tag;
@@ -65,6 +66,8 @@ protected:
 	Component *_parent, *_child, *_sibling;
 	Math::Matrix4 _matrix;
 	Costume *_cost;
+	Common::String _name;
+
 	void setCostume(Costume *cost) { _cost = cost; }
 	void setParent(Component *newParent);
 	void removeChild(Component *child);

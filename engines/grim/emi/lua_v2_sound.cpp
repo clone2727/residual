@@ -20,18 +20,14 @@
  *
  */
 
-#define FORBIDDEN_SYMBOL_EXCEPTION_chdir
-#define FORBIDDEN_SYMBOL_EXCEPTION_getcwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_unlink
-#define FORBIDDEN_SYMBOL_EXCEPTION_getwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_mkdir
-
 #include "audio/mixer.h"
 #include "audio/audiostream.h"
 #include "common/system.h"
 
 #include "engines/grim/emi/sound/aifftrack.h"
+#include "engines/grim/emi/sound/scxtrack.h"
 #include "engines/grim/emi/lua_v2.h"
+#include "engines/grim/emi/poolsound.h"
 #include "engines/grim/lua/lua.h"
 
 #include "engines/grim/sound.h"
@@ -144,8 +140,23 @@ void Lua_V2::SetGroupVolume() {
 	if (lua_isnumber(volumeObj))
 		volume = (int)lua_getnumber(volumeObj);
 
+	volume = (volume * Audio::Mixer::kMaxMixerVolume) / 100;
+
+	switch (group) {
+		case 1: // SFX
+			g_system->getMixer()->setVolumeForSoundType(Audio::Mixer::kSFXSoundType, volume);
+			break;
+		case 2: // Voice
+			g_system->getMixer()->setVolumeForSoundType(Audio::Mixer::kSpeechSoundType, volume);
+			break;
+		case 3: // Music
+			g_system->getMixer()->setVolumeForSoundType(Audio::Mixer::kMusicSoundType, volume);
+			break;
+		default:
+			error("Lua_V2::SetGroupVolume - unknown group %d", group);
+	}
 	// FIXME: func(group, volume);
-	warning("Lua_V2::SetGroupVolume: implement opcode, group: %d, volume %d", group, volume);
+	warning("Lua_V2::SetGroupVolume: group: %d, volume %d", group, volume);
 }
 
 void Lua_V2::EnableAudioGroup() {
@@ -161,7 +172,21 @@ void Lua_V2::EnableAudioGroup() {
 		state = true;
 
 	// FIXME: func(group, state);
-	warning("Lua_V2::EnableAudioGroup: implement opcode, group: %d, state %d", group, (int)state);
+	switch (group) {
+		case 1: // SFX
+			g_system->getMixer()->muteSoundType(Audio::Mixer::kSFXSoundType, !state);
+			break;
+		case 2: // Voice
+			g_system->getMixer()->muteSoundType(Audio::Mixer::kSpeechSoundType, !state);
+			break;
+		case 3: // Music
+			g_system->getMixer()->muteSoundType(Audio::Mixer::kMusicSoundType, !state);
+			break;
+		default:
+			error("Lua_V2::EnableAudioGroup - unknown group %d", group);
+	}
+
+	warning("Lua_V2::EnableAudioGroup: group: %d, state %d", group, (int)state);
 }
 
 void Lua_V2::ImSelectSet() {
@@ -170,29 +195,17 @@ void Lua_V2::ImSelectSet() {
 	if (lua_isnumber(qualityObj)) {
 		int quality = (int)lua_getnumber(qualityObj);
 		// FIXME: func(quality);
-		warning("Lua_V2::ImSelectSet: implement opcode, quality mode: %d", quality);
+		g_sound->selectMusicSet(quality);
+		warning("Lua_V2::ImSelectSet: quality mode: %d", quality);
 	}
 }
 
 void Lua_V2::ImFlushStack() {
 	// FIXME
-	warning("Lua_V2::ImFlushStack: implement opcode");
+	warning("Lua_V2::ImFlushStack: currently guesswork");
+	g_sound->flushStack();
 }
 
-class PoolSound : public PoolObject<PoolSound>{
-public:
-	PoolSound(const Common::String &filename);
-	static int32 getStaticTag() { return MKTAG('A', 'I', 'F', 'F'); }
-	AIFFTrack *track;
-};
-
-PoolSound::PoolSound(const Common::String &filename) {
-	track = new AIFFTrack(Audio::Mixer::kSFXSoundType);
-	Common::SeekableReadStream *stream = g_resourceloader->openNewStreamFile(filename);
-	if (!stream)
-		return;
-	track->openSound(filename, stream);
-}
 
 void Lua_V2::LoadSound() {
 	lua_Object strObj = lua_getparam(1);
@@ -264,14 +277,43 @@ void Lua_V2::PlaySound() {
 	const char *str = lua_getstring(strObj);
 	Common::String filename = str;
 
+	SoundTrack *track;
+
 	if (g_grim->getGameFlags() != ADGF_DEMO) {
-		filename += ".aif";
+		if (g_grim->getGamePlatform() == Common::kPlatformPS2) {
+			filename += ".scx";
+		} else {
+			if (!filename.hasSuffix(".aif")) {
+				filename += ".aif";
+			}
+		}
 	}
 
-	AIFFTrack *track = new AIFFTrack(Audio::Mixer::kSFXSoundType);
-	Common::SeekableReadStream *stream = g_resourceloader->openNewStreamFile(filename);
+	Common::SeekableReadStream *stream = g_resourceloader->openNewStreamFile(filename, true);
+	if (!stream) {
+		warning("Lua_V2::PlaySound: Could not find sound '%s'", filename.c_str());
+		return;
+	}
+
+	if (g_grim->getGamePlatform() != Common::kPlatformPS2) {
+		track = new AIFFTrack(Audio::Mixer::kSFXSoundType);
+	} else {
+		track = new SCXTrack(Audio::Mixer::kSFXSoundType);
+	}
+
 	track->openSound(filename, stream);
 	track->play();
+}
+
+// FIXME: implement sound positioning
+void Lua_V2::PlaySoundFrom() {
+//  lua_Object strObj = lua_getparam(1);
+//  lua_Object volObj = lua_getparam(2);
+//  lua_Object posxObj = lua_getparam(3);
+//  lua_Object posyObj = lua_getparam(4);
+//  lua_Object posZObj = lua_getparam(5);
+
+	return PlaySound();
 }
 
 void Lua_V2::ImSetMusicVol() {
@@ -320,10 +362,12 @@ void Lua_V2::StopAllSounds() {
 }
 
 void Lua_V2::ImPushState() {
-	warning("Lua_V2::ImPushState: implement opcode");
+	g_sound->pushState();
+	warning("Lua_V2::ImPushState: currently guesswork");
 }
 void Lua_V2::ImPopState() {
-	warning("Lua_V2::ImPopState: implement opcode");
+	g_sound->popState();
+	warning("Lua_V2::ImPopState: currently guesswork");
 }
 
 } // end of namespace Grim

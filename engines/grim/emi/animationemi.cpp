@@ -38,60 +38,54 @@ void AnimationEmi::loadAnimation(Common::SeekableReadStream *data) {
 
 	char temp[4];
 	data->read(temp, 4);
-	_duration = get_float(temp);
-	_numBones = data->readUint32LE();;
+	_duration = 1000 * get_float(temp);
+	_numBones = data->readUint32LE();
 
-	_bones = new Bone*[_numBones];
+	_bones = new Bone[_numBones];
 	for (int i = 0; i < _numBones; i++) {
-		_bones[i] = new Bone();
-		len = data->readUint32LE();
-		inString = new char[len];
-		data->read(inString, len);
-		_bones[i]->_boneName = inString;
-		_bones[i]->_operation = data->readUint32LE();;
-		_bones[i]->_b = data->readUint32LE();;
-		_bones[i]->_c = data->readUint32LE();;
-		_bones[i]->_count = data->readUint32LE();;
-
-		if (_bones[i]->_operation == 3) { // Translation
-			_bones[i]->_translations = new AnimTranslation*[_bones[i]->_count];
-			for(int j = 0; j < _bones[i]->_count; j++) {
-				_bones[i]->_translations[j] = new AnimTranslation();
-				_bones[i]->_translations[j]->_vec.readFromStream(data);
-				data->read(temp, 4);
-				_bones[i]->_translations[j]->_time = get_float(temp);
-			}
-		} else if (_bones[i]->_operation == 4) { // Rotation
-			_bones[i]->_rotations = new AnimRotation*[_bones[i]->_count];
-			for(int j = 0; j < _bones[i]->_count; j++) {
-				_bones[i]->_rotations[j] = new AnimRotation();
-				_bones[i]->_rotations[j]->_quat.readFromStream(data);
-				data->read(temp, 4);
-				_bones[i]->_rotations[j]->_time = get_float(temp);
-			}
-		} else {
-			error("Unknown animation-operation %d", _bones[i]->_operation);
-		}		
+		_bones[i].loadBinary(data);
 	}
 }
 
 AnimationEmi::~AnimationEmi() {
-	for (int i = 0; i < _numBones; i++) {
-		delete _bones[i];
-	}
 	delete[] _bones;
+}
+
+void Bone::loadBinary(Common::SeekableReadStream *data) {
+	uint32 len = data->readUint32LE();
+	char *inString = new char[len];
+	data->read(inString, len);
+	_boneName = inString;
+	delete[] inString;
+	_operation = data->readUint32LE();
+	_b = data->readUint32LE();
+	_c = data->readUint32LE();
+	_count = data->readUint32LE();
+
+	char temp[4];
+	if (_operation == 3) { // Translation
+		_translations = new AnimTranslation[_count];
+		for(int j = 0; j < _count; j++) {
+			_translations[j]._vec.readFromStream(data);
+			data->read(temp, 4);
+			_translations[j]._time = 1000 * get_float(temp);
+		}
+	} else if (_operation == 4) { // Rotation
+		_rotations = new AnimRotation[_count];
+		for(int j = 0; j < _count; j++) {
+			_rotations[j]._quat.readFromStream(data);
+			data->read(temp, 4);
+			_rotations[j]._time = 1000 * get_float(temp);
+		}
+	} else {
+		error("Unknown animation-operation %d", _operation);
+	}
 }
 
 Bone::~Bone() {
 	if (_operation == 3) {
-		for(int i = 0; i < _count; i++) {
-			delete _translations[i];
-		}
 		delete[] _translations;
 	} else if (_operation == 4) {
-		for(int i = 0; i < _count; i++) {
-			delete _rotations[i];
-		}
 		delete[] _rotations;
 	}
 }

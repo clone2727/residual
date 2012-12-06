@@ -20,26 +20,24 @@
  *
  */
 
-#define FORBIDDEN_SYMBOL_EXCEPTION_chdir
-#define FORBIDDEN_SYMBOL_EXCEPTION_getcwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_unlink
-#define FORBIDDEN_SYMBOL_EXCEPTION_getwd
-#define FORBIDDEN_SYMBOL_EXCEPTION_mkdir
-
 #include "common/endian.h"
+#include "common/foreach.h"
 
 #include "engines/grim/emi/lua_v2.h"
 #include "engines/grim/lua/lauxlib.h"
 
+#include "engines/grim/resource.h"
 #include "engines/grim/set.h"
 #include "engines/grim/grim.h"
 #include "engines/grim/gfx_base.h"
+#include "engines/grim/font.h"
 
 #include "engines/grim/movie/movie.h"
 
 namespace Grim {
 
 void Lua_V2::UndimAll() {
+	g_driver->setDimLevel(0);
 	warning("Lua_V2::UndimAll: stub");
 }
 
@@ -52,6 +50,9 @@ void Lua_V2::UndimRegion() {
 		warning("Lua_V2::UndimRegion: region: %d", region);
 	} else {
 		lua_pushnil();
+		// HACK: The demo uses this to undim the intro-screen.
+		// thus UndimRegion(nil) might mean UndimScreen.
+		g_driver->setDimLevel(0);
 	}
 }
 
@@ -62,6 +63,7 @@ void Lua_V2::DimScreen() {
 	if (lua_isnumber(dimObj))
 		dim = lua_getnumber(dimObj);
 
+	g_driver->setDimLevel(dim);
 	// FIXME func(dim);
 	warning("Lua_V2::DimScreen: dim: %f", dim);
 }
@@ -195,9 +197,43 @@ void Lua_V2::PurgeText() {
 }
 
 void Lua_V2::GetFontDimensions() {
-	warning("Lua_V2::GetFontDimensions: returns 0,0");
-	lua_pushnumber(0.f);
-	lua_pushnumber(0.f);
+	lua_Object fontObj = lua_getparam(1);
+	if (!lua_isstring(fontObj))
+		return;
+
+	const char *fontName = lua_getstring(fontObj);
+
+	Font *font = NULL;
+	foreach (Font *f, Font::getPool()) {
+		if (f->getFilename() == fontName) {
+			font = f;
+		}
+	}
+	if (!font) {
+		font = g_resourceloader->loadFont(fontName);
+	}
+	if (font) {
+		int32 h = font->getBaseOffsetY();
+		int32 w = font->getCharWidth('w');
+		warning("Lua_V2::GetFontDimensions for font '%s': returns %d,%d", fontName, h, w);
+		lua_pushnumber(w);
+		lua_pushnumber(h);
+	} else {
+		warning("Lua_V2::GetFontDimensions for font '%s': returns 0,0", fontName);
+		lua_pushnumber(0.f);
+		lua_pushnumber(0.f);
+	}
+}
+
+void Lua_V2::GetTextCharPosition() {
+	lua_Object textObj = lua_getparam(1);
+	lua_Object posObj = lua_getparam(2);
+	if (lua_isuserdata(textObj) && lua_tag(textObj) == MKTAG('T', 'E', 'X', 'T')) {
+		TextObject *textObject = gettextobject(textObj);
+		int pos = (int)lua_getnumber(posObj);
+		float textPos = textObject->getTextCharPosition(pos);
+		lua_pushnumber(textPos / 320.f);
+	}
 }
 
 void Lua_V2::GetTextObjectDimensions() {
@@ -205,8 +241,8 @@ void Lua_V2::GetTextObjectDimensions() {
 
 	if (lua_isuserdata(textObj) && lua_tag(textObj) == MKTAG('T', 'E', 'X', 'T')) {
 		TextObject *textObject = gettextobject(textObj);
-		lua_pushnumber(textObject->getBitmapWidth()/640.f);
-		lua_pushnumber(textObject->getBitmapHeight()/480.f);
+		lua_pushnumber(textObject->getBitmapWidth() / 320.f);
+		lua_pushnumber(textObject->getBitmapHeight() / 240.f);
 	}
 }
 
@@ -216,6 +252,11 @@ void Lua_V2::ToggleOverworld() {
 	if (backToNormal) {
 		GrimEngine::EngineMode previous = g_grim->getPreviousMode();
 		g_grim->setPreviousMode(GrimEngine::OverworldMode);
+		// HACK: ToggleOverworld is only called after we load a save game.
+		//       However, the engine saved PreviousMode as OverworldMode.
+		//       Reset it to normal here.
+		if (previous == GrimEngine::OverworldMode)
+			previous = GrimEngine::NormalMode;
 		g_grim->setMode(previous);
 	} else {
 		GrimEngine::EngineMode previous = g_grim->getMode();
@@ -261,6 +302,11 @@ void Lua_V2::GetCameraYaw() {
 	lua_pushnumber(0);
 }
 
+void Lua_V2::GetCameraRoll() {
+	warning("Lua_V2::GetCameraRoll: implement opcode, just returns 0");
+	lua_pushnumber(0);
+}
+
 // I suspect that pushtext and poptext stack the current text objects.
 void Lua_V2::PushText() {
 	warning("Lua_V2::PushText: implement opcode");
@@ -295,6 +341,46 @@ void Lua_V2::GetSectorName() {
 void Lua_V2::GammaEnabled() {
 	warning("Lua_V2::GammaEnabled: implement opcode, pushing nil");
 	lua_pushnil();
+}
+
+void Lua_V2::FileFindFirst() {
+	lua_Object extObj = lua_getparam(1);
+	if (!lua_isstring(extObj)) {
+		lua_pushnil();
+		return;
+	}
+
+	FileFindDispose();
+
+	const char *extension = lua_getstring(extObj);
+	if (0 == strncmp(extension, "Saves/", 6))
+		extension += 6;
+	Common::SaveFileManager *saveFileMan = g_system->getSavefileManager();
+	g_grim->_listFiles = saveFileMan->listSavefiles(extension);
+	Common::sort(g_grim->_listFiles.begin(), g_grim->_listFiles.end());
+	g_grim->_listFilesIter = g_grim->_listFiles.begin();
+
+	if (g_grim->_listFilesIter == g_grim->_listFiles.end())
+		lua_pushnil();
+	else
+		FileFindNext();
+}
+
+void Lua_V2::ThumbnailFromFile() {
+	lua_Object texIdObj = lua_getparam(1);
+	lua_Object filenameObj = lua_getparam(2);
+
+	if (!lua_isnumber(texIdObj) || !lua_isstring(filenameObj))
+		return;
+
+	warning("Lua_V2::ThumbnailFromFile: implement opcode, pushing true");
+	pushbool(true);
+}
+
+void Lua_V2::GetMemoryCardId() {
+	// 0 - No mem card
+	lua_pushnumber(0);
+	warning("GetMemoryCardId: Currently just returning 0");
 }
 
 // Stub function for builtin functions not yet implemented
@@ -340,18 +426,13 @@ static void stubError(const char *funcName) {
 // STUB_FUNC2(Lua_V2::SetLightPosition)
 // STUB_FUNC2(Lua_V2::GetAngleBetweenVectors)
 // STUB_FUNC2(Lua_V2::IsPointInSector)
+// STUB_FUNC2(Lua_V2::ThumbnailFromFile)
 
 // Monkey specific LUA_OPCODEs
-STUB_FUNC2(Lua_V2::ThumbnailFromFile)
 STUB_FUNC2(Lua_V2::EnableActorPuck)
-STUB_FUNC2(Lua_V2::PlayChore)
-STUB_FUNC2(Lua_V2::PauseChore)
 STUB_FUNC2(Lua_V2::CompleteChore)
-STUB_FUNC2(Lua_V2::LockChoreSet)
-STUB_FUNC2(Lua_V2::UnlockChoreSet)
 STUB_FUNC2(Lua_V2::GetSoundVolume)
 STUB_FUNC2(Lua_V2::SetSoundVolume)
-STUB_FUNC2(Lua_V2::PlaySoundFrom)
 STUB_FUNC2(Lua_V2::UpdateSoundPosition)
 STUB_FUNC2(Lua_V2::ImStateHasLooped)
 STUB_FUNC2(Lua_V2::YawCamera)
@@ -411,6 +492,7 @@ struct luaL_reg monkeyMainOpcodes[] = {
 	{ "IsChoreValid", LUA_OPCODE(Lua_V2, IsChoreValid) },
 	{ "IsChorePlaying", LUA_OPCODE(Lua_V2, IsChorePlaying) },
 	{ "IsChoreLooping", LUA_OPCODE(Lua_V2, IsChoreLooping) },
+	{ "SetChoreLooping", LUA_OPCODE(Lua_V2, SetChoreLooping) },
 	{ "StopActorChores", LUA_OPCODE(Lua_V2, StopActorChores) },
 	{ "PlayChore", LUA_OPCODE(Lua_V2, PlayChore) },
 	{ "StopChore", LUA_OPCODE(Lua_V2, StopChore) },
@@ -478,7 +560,9 @@ struct luaL_reg monkeyMainOpcodes[] = {
 	{ "SectEditForgetIt", LUA_OPCODE(Lua_V2, SectEditForgetIt) },
 	{ "GammaEnabled", LUA_OPCODE(Lua_V2, GammaEnabled) },
 	{ "FRUTEY_Begin", LUA_OPCODE(Lua_V2, FRUTEY_Begin) },
-	{ "FRUTEY_End", LUA_OPCODE(Lua_V2, FRUTEY_End) }
+	{ "FRUTEY_End", LUA_OPCODE(Lua_V2, FRUTEY_End) },
+// PS2:
+	{ "GetMemoryCardId", LUA_OPCODE(Lua_V2, GetMemoryCardId) }
 };
 
 void Lua_V2::registerOpcodes() {

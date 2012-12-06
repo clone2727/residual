@@ -30,8 +30,12 @@
 namespace Grim {
 
 // Should initialize the status variables so the chore can't play unexpectedly
-Chore::Chore() : _hasPlayed(false), _playing(false), _looping(false), _currTime(-1),
-                          _tracks(NULL) {
+Chore::Chore(char name[32], int id, Costume *owner, int length, int numTracks) :
+		_hasPlayed(false), _playing(false), _looping(false), _currTime(-1),
+		_numTracks(numTracks), _length(length), _choreId(id), _owner(owner) {
+
+	memcpy(_name, name, 32);
+	_tracks = new ChoreTrack[_numTracks];
 }
 
 Chore::~Chore() {
@@ -44,11 +48,8 @@ Chore::~Chore() {
 	}
 }
 
-void Chore::load(int id, Costume *owner, TextSplitter &ts) {
-	_owner = owner;
-	_tracks = new ChoreTrack[_numTracks];
+void Chore::load(TextSplitter &ts) {
 	_hasPlayed = _playing = false;
-	_choreId = id;
 	for (int i = 0; i < _numTracks; i++) {
 		int compID, numKeys;
 		ts.scanString(" %d %d", 2, &compID, &numKeys);
@@ -79,12 +80,19 @@ void Chore::playLooping() {
 	fade(Animation::None, 0);
 }
 
+Component *Chore::getComponentForTrack(int i) const {
+	if (_tracks[i].compID == -1)
+		return _tracks[i].component;
+	else
+		return _owner->_components[_tracks[i].compID];
+}
+
 void Chore::stop() {
 	_playing = false;
 	_hasPlayed = false;
 
 	for (int i = 0; i < _numTracks; i++) {
-		Component *comp = _owner->_components[_tracks[i].compID];
+		Component *comp = getComponentForTrack(i);
 		if (comp)
 			comp->reset();
 	}
@@ -92,7 +100,7 @@ void Chore::stop() {
 
 void Chore::setKeys(int startTime, int stopTime) {
 	for (int i = 0; i < _numTracks; i++) {
-		Component *comp = _owner->_components[_tracks[i].compID];
+		Component *comp = getComponentForTrack(i);
 		if (!comp)
 			continue;
 
@@ -152,8 +160,8 @@ void Chore::update(uint time) {
 
 void Chore::fade(Animation::FadeMode mode, uint msecs) {
 	for (int i = 0; i < _numTracks; i++) {
-		Component *comp = _owner->_components[_tracks[i].compID];
-		if (comp && FROM_BE_32(comp->getTag()) == MKTAG('K','E','Y','F')) {
+		Component *comp = getComponentForTrack(i);
+		if (comp && comp->isComponentType('K','E','Y','F')) {
 			KeyframeComponent *kf = static_cast<KeyframeComponent *>(comp);
 			kf->fade(mode, msecs);
 		}
@@ -176,9 +184,18 @@ void Chore::fadeOut(uint msecs) {
 	fade(Animation::FadeOut, msecs);
 }
 
-void Chore::createTracks(int num) {
-	_numTracks = num;
-	_tracks = new ChoreTrack[_numTracks];
+void Chore::saveState(SaveGame *state) const {
+	state->writeBool(_hasPlayed);
+	state->writeBool(_playing);
+	state->writeBool(_looping);
+	state->writeLESint32(_currTime);
+}
+
+void Chore::restoreState(SaveGame *state) {
+	_hasPlayed = state->readBool();
+	_playing = state->readBool();
+	_looping = state->readBool();
+	_currTime = state->readLESint32();
 }
 
 } // end of namespace Grim

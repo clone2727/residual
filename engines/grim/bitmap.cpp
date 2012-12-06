@@ -20,8 +20,6 @@
  *
  */
 
-#define FORBIDDEN_SYMBOL_EXCEPTION_printf
-
 #include "common/endian.h"
 
 #include "graphics/colormasks.h"
@@ -38,61 +36,6 @@ namespace Grim {
 static bool decompress_codec3(const char *compressed, char *result, int maxBytes);
 
 Common::HashMap<Common::String, BitmapData *> *BitmapData::_bitmaps = NULL;
-
-// Helper function for makeBitmapFromTile
-char *getLine(int lineNum, char *data, unsigned int width, int bpp) {
-	return data + (lineNum *(width * bpp));
-}
-
-#ifdef ENABLE_MONKEY4
-
-char *makeBitmapFromTile(char **bits, int width, int height, int bpp) {
-	bpp = bpp / 8;
-	char *fullImage = new char[width * height * bpp];
-
-	const int tWidth = 256 * bpp; // All tiles so far are 256 wide
-	const int tWidth2 = 256;
-
-	char *target = fullImage;
-	int line;
-	for (int i = 0; i < 256; i++) {
-		/* This can be modified to actually use the last 32 lines.
-		 * We simply put the lower half on line 223 and down to line 32,
-		 * then skip the last 32.
-		 * While the upper half is put on line 479 and down to line 224.
-		 */
-
-		if (i < 224) { // Skip blank space
-			line = 224 - i;
-			target = getLine(479 - i, fullImage, width, bpp);
-
-			memcpy(target, getLine(line, bits[3], tWidth2, bpp), tWidth);
-			target += tWidth;
-
-			memcpy(target, getLine(line, bits[4], tWidth2, bpp), tWidth);
-			target += tWidth;
-
-			memcpy(target, getLine(line, bits[2], tWidth2, bpp) + 128 * bpp, 128 * bpp);
-		}
-		line = 255 - i;
-		// Top half of course
-
-		target = getLine(line, fullImage, width, bpp);
-
-		memcpy(target, getLine(line, bits[0], tWidth2, bpp), tWidth);
-		target += tWidth;
-
-		memcpy(target, getLine(line, bits[1], tWidth2, bpp), tWidth);
-		target += tWidth;
-
-		memcpy(target, getLine(line, bits[2], tWidth2, bpp), 128 * bpp);
-
-	}
-
-	return fullImage;
-}
-
-#endif
 
 BitmapData *BitmapData::getBitmapData(const Common::String &fname) {
 	Common::String str(fname);
@@ -273,7 +216,7 @@ bool BitmapData::loadTGA(Common::SeekableReadStream *data) {
 
 	data->seek(9, SEEK_CUR);
 	_width = data->readUint16LE();
-	_height = data->readUint16LE();;
+	_height = data->readUint16LE();
 	_format = 1;
 	_x = 0;
 	_y = 0;
@@ -325,12 +268,36 @@ bool BitmapData::loadTile(Common::SeekableReadStream *o) {
 	_y = 0;
 	_format = 1;
 	o->seek(0, SEEK_SET);
-	//warning("Loading TILE: %s",fname.c_str());
 
 	/*uint32 id = */o->readUint32LE();
 	// Should check that we actually HAVE a TIL
 	uint32 bmoffset = o->readUint32LE();
-	o->seek(bmoffset + 16);
+	_numCoords = o->readUint32LE();
+	_numLayers = o->readUint32LE();
+	_numVerts = o->readUint32LE();
+
+	// skip some 0
+	o->seek(16, SEEK_CUR);
+	_texc = new float[_numCoords * 4];
+
+	for (uint32 i = 0; i < _numCoords * 4; ++i) {
+		o->read(&_texc[i], sizeof(float));
+	}
+
+	_layers = new Layer[_numLayers];
+	for (uint32 i = 0; i < _numLayers; ++i) {
+		_layers[i]._offset = o->readUint32LE();
+		_layers[i]._numImages = o->readUint32LE();
+	}
+
+	_verts = new Vert[_numVerts];
+	for (uint32 i = 0; i < _numVerts; ++i) {
+		_verts[i]._texid = o->readUint32LE();
+		_verts[i]._pos = o->readUint32LE();
+		_verts[i]._verts = o->readUint32LE();
+	}
+
+	o->seek(16, SEEK_CUR);
 	int numSubImages = o->readUint32LE();
 	if (numSubImages < 5)
 		error("Can not handle a tile with less than 5 sub images");
@@ -353,27 +320,26 @@ bool BitmapData::loadTile(Common::SeekableReadStream *o) {
 		o->read(data[i], size);
 	}
 
-	char *bMap = makeBitmapFromTile(data, 640, 480, _bpp);
-	for (int i = 0; i < numSubImages; ++i) {
-		delete[] data[i];
-	}
-	delete[] data;
 	Graphics::PixelFormat pixelFormat;
 	if (_bpp == 16) {
 		_colorFormat = BM_RGB1555;
 		pixelFormat = Graphics::createPixelFormat<1555>();
 		//convertToColorFormat(0, BM_RGBA);
 	} else {
-		pixelFormat = Graphics::PixelFormat(4, 8,8,8,8, 0, 8, 16, 24);
+		pixelFormat = Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24);
 		_colorFormat = BM_RGBA;
 	}
 
-	_width = 640;
-	_height = 480;
-	_numImages = 1;
+	_width = 256;
+	_height = 256;
+	_numImages = numSubImages;
 	_data = new Graphics::PixelBuffer[_numImages];
-	_data[0].create(pixelFormat, _width * _height, DisposeAfterUse::YES);
-	_data[0].set(pixelFormat, (byte *)bMap);
+	for (int i = 0; i < _numImages; ++i) {
+		_data[i].create(pixelFormat, _width * _height, DisposeAfterUse::YES);
+		_data[i].set(pixelFormat, (byte *)data[i]);
+	}
+
+	delete[] data;
 
 	g_driver->createBitmap(this);
 #endif // ENABLE_MONKEY4
@@ -440,6 +406,14 @@ void Bitmap::draw(int x, int y) {
 		return;
 
 	g_driver->drawBitmap(this, x, y);
+}
+
+void Bitmap::drawForeground() {
+	_data->load();
+	if (_currImage == 0)
+		return;
+
+	g_driver->drawBitmap(this, _data->_x, _data->_y, false);
 }
 
 void Bitmap::setActiveImage(int n) {

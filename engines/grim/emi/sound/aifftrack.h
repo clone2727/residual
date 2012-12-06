@@ -36,12 +36,15 @@ namespace Grim {
 
 class AIFFTrack : public SoundTrack {
 public:
-	AIFFTrack(Audio::Mixer::SoundType soundType);
+	AIFFTrack(Audio::Mixer::SoundType soundType, DisposeAfterUse::Flag disposeOfStream = DisposeAfterUse::YES);
 	~AIFFTrack();
 	bool openSound(Common::String soundName, Common::SeekableReadStream *file);
 	bool isPlaying() { return true; }
+	bool isStreamOpen() { return _stream != NULL; }
 	void setLooping(bool looping);
 	bool play();
+private:
+	bool _looping;
 };
 
 }

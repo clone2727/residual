@@ -52,6 +52,8 @@ public:
 	BlitImage() {
 		_lines = NULL;
 		_last = NULL;
+		_width = 0;
+		_height = 0;
 	}
 	~BlitImage() {
 		Line *temp = _lines;
@@ -63,6 +65,8 @@ public:
 	}
 	void create(const Graphics::PixelBuffer &buf, uint32 transparency, int x, int y, int width, int height) {
 		Graphics::PixelBuffer srcBuf = buf;
+		_width = width;
+		_height = height;
 		// A line of pixels can not wrap more that one line of the image, since it would break
 		// blitting of bitmaps with a non-zero x position.
 		for (int l = 0; l < height; l++) {
@@ -119,6 +123,7 @@ public:
 	};
 	Line *_lines;
 	Line *_last;
+	int _width, _height;
 };
 
 GfxBase *CreateGfxTinyGL() {
@@ -245,6 +250,9 @@ byte *GfxTinyGL::setupScreen(int screenW, int screenH, bool fullscreen) {
 
 	_screenWidth = screenW;
 	_screenHeight = screenH;
+	_scaleW = _screenWidth / (float)_gameWidth;
+	_scaleH = _screenHeight / (float)_gameHeight;
+
 	_isFullscreen = g_system->getFeatureState(OSystem::kFeatureFullscreenMode);
 
 	g_system->showMouse(!fullscreen);
@@ -281,28 +289,24 @@ void GfxTinyGL::setupCamera(float fov, float nclip, float fclip, float roll) {
 	tglMatrixMode(TGL_MODELVIEW);
 	tglLoadIdentity();
 
-	tglRotatef(roll, 0, 0, -1);
 }
 
-void GfxTinyGL::positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest) {
-	Math::Vector3d up_vec(0, 0, 1);
-
-	// EMI only: transform XYZ to YXZ
+void GfxTinyGL::positionCamera(const Math::Vector3d &pos, const Math::Vector3d &interest, float roll) {
 	if (g_grim->getGameType() == GType_MONKEY4) {
-		static const float EMI_MATRIX[] = {
-			0,1,0,0,
-			1,0,0,0,
-			0,0,1,0,
-			0,0,0,1
-		};
+		tglScalef(1.0,1.0,-1.0);
 
-		tglMultMatrixf(EMI_MATRIX);
+		_currentPos = pos;
+		_currentQuat = Math::Quaternion(interest.x(), interest.y(), interest.z(), roll);
+	} else {
+		Math::Vector3d up_vec(0, 0, 1);
+
+		tglRotatef(roll, 0, 0, -1);
+
+		if (pos.x() == interest.x() && pos.y() == interest.y())
+			up_vec = Math::Vector3d(0, 1, 0);
+
+		lookAt(pos.x(), pos.y(), pos.z(), interest.x(), interest.y(), interest.z(), up_vec.x(), up_vec.y(), up_vec.z());
 	}
-
-	if (pos.x() == interest.x() && pos.y() == interest.y())
-		up_vec = Math::Vector3d(0, 1, 0);
-
-	lookAt(pos.x(), pos.y(), pos.z(), interest.x(), interest.y(), interest.z(), up_vec.x(), up_vec.y(), up_vec.z());
 }
 
 void GfxTinyGL::clearScreen() {
@@ -311,8 +315,6 @@ void GfxTinyGL::clearScreen() {
 }
 
 void GfxTinyGL::flipBuffer() {
-	TinyGL::ZB_blitOffscreenBuffer(_zb);
-
 	g_system->updateScreen();
 }
 
@@ -326,6 +328,10 @@ void GfxTinyGL::selectCleanBuffer() {
 
 void GfxTinyGL::clearCleanBuffer() {
 	TinyGL::ZB_clearOffscreenBuffer(_zb);
+}
+
+void GfxTinyGL::drawCleanBuffer() {
+	TinyGL::ZB_blitOffscreenBuffer(_zb);
 }
 
 bool GfxTinyGL::isHardwareAccelerated() {
@@ -467,9 +473,8 @@ void GfxTinyGL::getBoundingBoxPos(const Mesh *model, int *x1, int *y1, int *x2, 
 	}*/
 }
 
-void GfxTinyGL::startActorDraw(const Math::Vector3d &pos, float scale, const Math::Angle &yaw,
-							   const Math::Angle &pitch, const Math::Angle &roll, const bool inOverworld,
-								 const float alpha) {
+void GfxTinyGL::startActorDraw(const Math::Vector3d &pos, float scale, const Math::Quaternion &quat,
+	                             const bool inOverworld, const float alpha) {
 	tglEnable(TGL_TEXTURE_2D);
 	tglMatrixMode(TGL_PROJECTION);
 	tglPushMatrix();
@@ -508,18 +513,15 @@ void GfxTinyGL::startActorDraw(const Math::Vector3d &pos, float scale, const Mat
 		tglScalef(1.0, 1.0, -1.0);
 		tglTranslatef(pos.x(), pos.y(), pos.z());
 	} else {
-		tglTranslatef(pos.x(), pos.y(), pos.z());
+		Math::Vector3d relPos = (pos - _currentPos);
+
+		Math::Matrix4 worldRot = _currentQuat.toMatrix();
+		worldRot.inverseRotate(&relPos);
+		tglTranslatef(relPos.x(), relPos.y(), relPos.z());
+		tglMultMatrixf(worldRot.getData());
+
 		tglScalef(scale, scale, scale);
-		// EMI uses Y axis as down-up, so we need to rotate differently.
-		if (g_grim->getGameType() == GType_MONKEY4) {
-			tglRotatef(yaw.getDegrees(), 0, -1, 0);
-			tglRotatef(pitch.getDegrees(), 1, 0, 0);
-			tglRotatef(roll.getDegrees(), 0, 0, 1);
-		} else {
-			tglRotatef(yaw.getDegrees(), 0, 0, 1);
-			tglRotatef(pitch.getDegrees(), 1, 0, 0);
-			tglRotatef(roll.getDegrees(), 0, 1, 0);
-		}
+		tglMultMatrixf(quat.toMatrix().getData());
 	}
 }
 
@@ -624,12 +626,13 @@ void GfxTinyGL::drawEMIModelFace(const EMIModel* model, const EMIMeshFace* face)
 		tglDisable(TGL_TEXTURE_2D);
 	tglBegin(TGL_TRIANGLES);
 
+	float dim = 1.0f - _dimLevel;
 	for (uint j = 0; j < face->_faceLength * 3; j++) {
 		int index = indices[j];
 		if (face->_hasTexture) {
 			tglTexCoord2f(model->_texVerts[index].getX(), model->_texVerts[index].getY());
 		}
-		tglColor4ub(model->_colorMap[index].r, model->_colorMap[index].g, model->_colorMap[index].b, (int)_alpha);
+		tglColor4ub((byte)(model->_colorMap[index].r * dim), (byte)(model->_colorMap[index].g * dim), (byte)(model->_colorMap[index].b * dim), (int)_alpha);
 
 		Math::Vector3d normal = model->_normals[index];
 		Math::Vector3d vertex = model->_drawVertices[index];
@@ -682,15 +685,19 @@ void GfxTinyGL::drawSprite(const Sprite *sprite) {
 
 	tglDisable(TGL_LIGHTING);
 
+	float halfWidth = (sprite->_width / 2) * _scaleW;
+	float halfHeight = (sprite->_height / 2) * _scaleH;
+
+
 	tglBegin(TGL_POLYGON);
-	tglTexCoord2f(0.0f, 0.0f);
-	tglVertex3f(sprite->_width / 2, sprite->_height, 0.0f);
 	tglTexCoord2f(0.0f, 1.0f);
-	tglVertex3f(sprite->_width / 2, 0.0f, 0.0f);
-	tglTexCoord2f(1.0f, 1.0f);
-	tglVertex3f(-sprite->_width / 2, 0.0f, 0.0f);
+	tglVertex3f(-halfWidth, -halfHeight, 0.0f);
+	tglTexCoord2f(0.0f, 0.0f);
+	tglVertex3f(-halfWidth, +halfHeight, 0.0f);
 	tglTexCoord2f(1.0f, 0.0f);
-	tglVertex3f(-sprite->_width / 2, sprite->_height, 0.0f);
+	tglVertex3f(+halfWidth, +halfHeight, 0.0f);
+	tglTexCoord2f(1.0f, 1.0f);
+	tglVertex3f(+halfWidth, -halfHeight, 0.0f);
 	tglEnd();
 
 	tglEnable(TGL_LIGHTING);
@@ -805,15 +812,13 @@ void GfxTinyGL::createBitmap(BitmapData *bitmap) {
 void GfxTinyGL::blit(const Graphics::PixelFormat &format, BlitImage *image, byte *dst, byte *src, int x, int y, int width, int height, bool trans) {
 	int srcX, srcY;
 
-	if (x >= _gameWidth || y >= _gameHeight)
-		return;
-
 	if (x < 0) {
 		srcX = -x;
 		x = 0;
 	} else {
 		srcX = 0;
 	}
+
 	if (y < 0) {
 		srcY = -y;
 		y = 0;
@@ -821,46 +826,123 @@ void GfxTinyGL::blit(const Graphics::PixelFormat &format, BlitImage *image, byte
 		srcY = 0;
 	}
 
-	if (x + width > _gameWidth)
-		width -= (x + width) - _gameWidth;
+	blit(format, image, dst, src, x, y, srcX, srcY, width, height, width, height, trans);
+}
 
-	if (y + height > _gameHeight)
-		height -= (y + height) - _gameHeight;
+void GfxTinyGL::blit(const Graphics::PixelFormat &format, BlitImage *image, byte *dst, byte *src, int dstX, int dstY, int srcX, int srcY, int width, int height, int srcWidth, int srcHeight, bool trans) {
+	if (_dimLevel >= 1.0f) {
+		return;
+	} else if (_dimLevel > 0.0f) {
+		warning("TinyGL doesn't implement partial screen-dimming yet");
+	}
 
-	dst += (x + (y * _gameWidth)) * format.bytesPerPixel;
-	src += (srcX + (srcY * width)) * format.bytesPerPixel;
+	if (dstX >= _gameWidth || dstY >= _gameHeight)
+		return;
+
+	int clampWidth, clampHeight;
+
+	if (dstX + width > _gameWidth)
+		clampWidth = _gameWidth - dstX;
+	else
+		clampWidth = width;
+
+	if (dstY + height > _gameHeight)
+		clampHeight = _gameHeight - dstY;
+	else
+		clampHeight = height;
+
+	dst += (dstX + (dstY * _gameWidth)) * format.bytesPerPixel;
+	src += (srcX + (srcY * srcWidth)) * format.bytesPerPixel;
 
 	Graphics::PixelBuffer srcBuf(format, src);
 	Graphics::PixelBuffer dstBuf(format, dst);
 
 	if (!trans) {
-		for (int l = 0; l < height; l++) {
-			dstBuf.copyBuffer(0, width, srcBuf);
+		for (int l = 0; l < clampHeight; l++) {
+			dstBuf.copyBuffer(0, clampWidth, srcBuf);
 			dstBuf.shiftBy(_gameWidth);
-			srcBuf.shiftBy(width);
+			srcBuf.shiftBy(srcWidth);
 		}
 	} else {
 		if (image) {
 			BlitImage::Line *l = image->_lines;
-			while (l) {
-				memcpy(dstBuf.getRawBuffer(l->y * _gameWidth + l->x), l->pixels, l->length * format.bytesPerPixel);
+			int maxY = srcY + clampHeight;
+			int maxX = srcX + clampWidth;
+			while (l && l->y < srcY)
+				l = l->next;
+
+			while (l && l->y <= maxY) {
+				if (l->x < maxX && l->x + l->length > srcX) {
+					int length = l->length;
+					int skipStart = l->x < srcX ? srcX - l->x : 0;
+					length -= skipStart;
+					int skipEnd   = l->x + l->length > maxX ? l->x + l->length - maxX : 0;
+					length -= skipEnd;
+					memcpy(dstBuf.getRawBuffer((l->y - srcY) * _gameWidth + MAX(l->x - srcX, 0)),
+							l->pixels + skipStart * format.bytesPerPixel, length * format.bytesPerPixel);
+				}
 				l = l->next;
 			}
 		} else {
-			for (int l = 0; l < height; l++) {
-				for (int r = 0; r < width; ++r) {
+			for (int l = 0; l < clampHeight; l++) {
+				for (int r = 0; r < clampWidth; ++r) {
 					if (srcBuf.getValueAt(r) != 0xf81f) {
 						dstBuf.setPixelAt(r, srcBuf);
 					}
 				}
 				dstBuf.shiftBy(_gameWidth);
-				srcBuf.shiftBy(width);
+				srcBuf.shiftBy(srcWidth);
 			}
 		}
 	}
 }
 
-void GfxTinyGL::drawBitmap(const Bitmap *bitmap, int x, int y) {
+void GfxTinyGL::drawBitmap(const Bitmap *bitmap, int x, int y, bool initialDraw) {
+
+	// PS2 EMI uses a TGA for it's splash-screen, avoid using the following
+	// code for drawing that (as it has no tiles).
+	if (g_grim->getGameType() == GType_MONKEY4 && bitmap->_data->_numImages > 1) {
+		// tglColor3f(1.0f - _dimLevel, 1.0f - _dimLevel, 1.0f  - _dimLevel);
+
+		BitmapData *data = bitmap->_data;
+		float *texc = data->_texc;
+
+		int curLayer, frontLayer;
+		if (initialDraw) {
+			curLayer = frontLayer = data->_numLayers - 1;
+		} else {
+			curLayer = data->_numLayers - 2;
+			frontLayer = 0;
+		}
+
+		BlitImage *b = (BlitImage *)bitmap->getTexIds();
+
+		while (frontLayer <= curLayer) {
+			uint32 offset = data->_layers[curLayer]._offset;
+			for (uint32 i = offset; i < offset + data->_layers[curLayer]._numImages; ++i) {
+				const BitmapData::Vert & v = data->_verts[i];
+				uint32 texId = v._texid;
+				uint32 ntex = data->_verts[i]._pos * 4;
+				uint32 numRects = data->_verts[i]._verts / 4;
+				while (numRects-- > 0) {
+					int dx1 = round((texc[ntex+0] + 1) * _screenWidth) / 2;
+					int dy1 = round((1 - texc[ntex+1]) * _screenHeight) / 2;
+					int dx2 = round((texc[ntex+8] + 1) * _screenWidth) / 2;
+					int dy2 = round((1 - texc[ntex+9]) * _screenHeight) / 2;
+					int srcX = round(texc[ntex+2] * bitmap->getWidth());
+					int srcY = round(texc[ntex+3] * bitmap->getHeight());
+
+					blit(bitmap->getPixelFormat(texId), &b[texId], _zb->pbuf.getRawBuffer(), bitmap->getData(texId).getRawBuffer(),
+							x + dx1, y + dy1, srcX, srcY, dx2 - dx1, dy2 - dy1, b[texId]._width, b[texId]._height, !initialDraw);
+					ntex += 16;
+				}
+			}
+			curLayer--;
+		}
+
+		return;
+	}
+
 	int format = bitmap->getFormat();
 	if ((format == 1 && !_renderBitmaps) || (format == 5 && !_renderZBitmaps)) {
 		return;
@@ -965,11 +1047,17 @@ void GfxTinyGL::createTextObject(TextObject *text) {
 		userData[j].x = text->getLineX(j);
 		userData[j].y = text->getLineY(j);
 
+		if (g_grim->getGameType() == GType_MONKEY4) {
+			userData[j].y -= font->getBaseOffsetY();
+			if (userData[j].y < 0)
+				userData[j].y = 0;
+		}
+
 		delete[] _textBitmap;
 	}
 }
 
-void GfxTinyGL::drawTextObject(TextObject *text) {
+void GfxTinyGL::drawTextObject(const TextObject *text) {
 	TextObjectData *userData = (TextObjectData *)text->getUserData();
 	if (userData) {
 		int numLines = text->getNumLines();
@@ -1022,6 +1110,8 @@ void GfxTinyGL::createMaterial(Texture *material, const char *data, const CMap *
 	if (material->_colorFormat == BM_RGBA) {
 		format = TGL_RGBA;
 //		internalFormat = TGL_RGBA;
+	} else if (material->_colorFormat == BM_BGRA) {
+		format = TGL_BGRA;
 	} else {	// The only other colorFormat we load right now is BGR
 		format = TGL_BGR;
 //		internalFormat = TGL_RGB;
@@ -1174,7 +1264,7 @@ void GfxTinyGL::irisAroundRegion(int x1, int y1, int x2, int y2) {
 	}
 }
 
-void GfxTinyGL::drawRectangle(PrimitiveObject *primitive) {
+void GfxTinyGL::drawRectangle(const PrimitiveObject *primitive) {
 	int x1 = primitive->getP1().x;
 	int y1 = primitive->getP1().y;
 	int x2 = primitive->getP2().x;
@@ -1209,7 +1299,7 @@ void GfxTinyGL::drawRectangle(PrimitiveObject *primitive) {
 	}
 }
 
-void GfxTinyGL::drawLine(PrimitiveObject *primitive) {
+void GfxTinyGL::drawLine(const PrimitiveObject *primitive) {
 	int x1 = primitive->getP1().x;
 	int y1 = primitive->getP1().y;
 	int x2 = primitive->getP2().x;
@@ -1233,7 +1323,7 @@ void GfxTinyGL::drawLine(PrimitiveObject *primitive) {
 	}
 }
 
-void GfxTinyGL::drawPolygon(PrimitiveObject *primitive) {
+void GfxTinyGL::drawPolygon(const PrimitiveObject *primitive) {
 	int x1 = primitive->getP1().x;
 	int y1 = primitive->getP1().y;
 	int x2 = primitive->getP2().x;

@@ -139,7 +139,6 @@ public:
 	void setSet(const char *name);
 	void setSet(Set *scene);
 	Set *getCurrSet() { return _currSet; }
-	const Common::String &getSetName() const;
 	void makeCurrentSetup(int num);
 
 	void flagRefreshShadowMask(bool flag) { _refreshShadowMask = flag; }
@@ -163,6 +162,7 @@ public:
 	 */
 	void addTalkingActor(Actor *actor);
 	bool areActorsTalking() const;
+	void immediatelyRemoveActor(Actor *actor);
 
 	void setMovieSubtitle(TextObject *to);
 
@@ -178,6 +178,8 @@ public:
 	Common::StringArray::const_iterator _listFilesIter;
 
 	TextObjectDefaults _sayLineDefaults, _printLineDefaults, _blastTextDefaults;
+
+	virtual void openMainMenuDialog();
 
 private:
 	void handleControls(Common::EventType type, const Common::KeyState &key);

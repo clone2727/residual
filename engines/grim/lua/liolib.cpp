@@ -5,9 +5,6 @@
 
 #define FORBIDDEN_SYMBOL_EXCEPTION_setjmp
 #define FORBIDDEN_SYMBOL_EXCEPTION_longjmp
-#define FORBIDDEN_SYMBOL_EXCEPTION_time_h
-#define FORBIDDEN_SYMBOL_EXCEPTION_unistd_h
-#define FORBIDDEN_SYMBOL_EXCEPTION_mkdir
 #define FORBIDDEN_SYMBOL_EXCEPTION_fread
 #define FORBIDDEN_SYMBOL_EXCEPTION_fwrite
 #define FORBIDDEN_SYMBOL_EXCEPTION_fseek
@@ -28,16 +25,6 @@
 #include "base/commandLine.h"
 
 #include "engines/grim/resource.h"
-
-#if defined(UNIX) || defined(__SYMBIAN32__)
-#include <sys/stat.h>
-#endif
-
-#include <time.h>
-
-#ifdef _WIN32
-#include <direct.h>
-#endif
 
 namespace Grim {
 
@@ -199,10 +186,11 @@ static void io_readfrom() {
 		setreturn(id, FINPUT);
 	} else {
 		const char *s = luaL_check_string(FIRSTARG);
+		Common::String fileName = Common::lastPathComponent(s, '\\');
 		LuaFile *current = NULL;
 		Common::SeekableReadStream *inFile = NULL;
 		Common::SaveFileManager *saveFileMan = g_system->getSavefileManager();
-		inFile = saveFileMan->openForLoading(s);
+		inFile = saveFileMan->openForLoading(fileName);
 		if (!inFile) {
 			inFile = g_resourceloader->openNewStreamFile(s);
 		}
@@ -236,7 +224,7 @@ static void io_writeto() {
 		}
 		setreturn(id, FOUTPUT);
 	} else {
-		const char *s = Common::lastPathComponent(luaL_check_string(FIRSTARG), '\\').c_str();
+		Common::String s = Common::lastPathComponent(luaL_check_string(FIRSTARG), '\\');
 		LuaFile *current;
 		Common::WriteStream *outFile = NULL;
 		Common::SaveFileManager *saveFileMan = g_system->getSavefileManager();
@@ -253,7 +241,7 @@ static void io_writeto() {
 }
 
 static void io_appendto() {
-	const char *s = Common::lastPathComponent(luaL_check_string(FIRSTARG), '\\').c_str();;
+	Common::String s = Common::lastPathComponent(luaL_check_string(FIRSTARG), '\\');
 	Common::SeekableReadStream *inFile = NULL;
 	Common::SaveFileManager *saveFileMan = g_system->getSavefileManager();
 	inFile = saveFileMan->openForLoading(s);

@@ -20,8 +20,6 @@
  *
  */
 
-#define FORBIDDEN_SYMBOL_EXCEPTION_printf
-
 #include "common/foreach.h"
 
 #include "engines/grim/debug.h"
@@ -195,9 +193,11 @@ void Set::loadBinary(Common::SeekableReadStream *data) {
 
 void Set::saveState(SaveGame *savedState) const {
 	savedState->writeString(_name);
-	savedState->writeLESint32(_numCmaps);
-	for (int i = 0; i < _numCmaps; ++i) {
-		savedState->writeString(_cmaps[i]->getFilename());
+	if (g_grim->getGameType() == GType_GRIM) {
+		savedState->writeLESint32(_numCmaps);
+		for (int i = 0; i < _numCmaps; ++i) {
+			savedState->writeString(_cmaps[i]->getFilename());
+		}
 	}
 	savedState->writeLEUint32((uint32)(_currSetup - _setups)); // current setup id
 	savedState->writeBool(_locked);
@@ -231,11 +231,13 @@ void Set::saveState(SaveGame *savedState) const {
 
 bool Set::restoreState(SaveGame *savedState) {
 	_name = savedState->readString();
-	_numCmaps = savedState->readLESint32();
-	_cmaps = new CMapPtr[_numCmaps];
-	for (int i = 0; i < _numCmaps; ++i) {
-		Common::String str = savedState->readString();
-		_cmaps[i] = g_resourceloader->getColormap(str);
+	if (g_grim->getGameType() == GType_GRIM) {
+		_numCmaps = savedState->readLESint32();
+		_cmaps = new CMapPtr[_numCmaps];
+		for (int i = 0; i < _numCmaps; ++i) {
+			Common::String str = savedState->readString();
+			_cmaps[i] = g_resourceloader->getColormap(str);
+		}
 	}
 
 	int32 currSetupId = savedState->readLEUint32();
@@ -475,8 +477,15 @@ void Set::Setup::setupCamera() const {
 	// are important at some point, we'll need to modify the
 	// zbuffer transformation in bitmap.cpp to take nclip_ and
 	// fclip_ into account.
-	g_driver->setupCamera(_fov, 0.01f, 3276.8f, _roll);
-	g_driver->positionCamera(_pos, _interest);
+	float nclip = this->_nclip;
+	float fclip = this->_fclip;
+	if (g_grim->getGameType() != GType_MONKEY4) {
+		nclip = 0.01f;
+		fclip = 3276.8f;
+	}
+
+	g_driver->setupCamera(_fov, nclip, fclip, _roll);
+	g_driver->positionCamera(_pos, _interest, _roll);
 }
 
 class Sorter {
@@ -538,6 +547,11 @@ void Set::setSetup(int num) {
 	}
 	_currSetup = _setups + num;
 	g_grim->flagRefreshShadowMask(true);
+}
+
+void Set::drawForeground() const {
+	assert(g_grim->getGameType() == GType_MONKEY4);
+	_currSetup->_bkgndBm->drawForeground();
 }
 
 void Set::drawBackground() const {

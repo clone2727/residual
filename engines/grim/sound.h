@@ -41,7 +41,12 @@ public:
 	void setPan(const char *soundName, int pan);
 	
 	void setMusicState(int stateId);
+	void selectMusicSet(int setId);
 	uint32 getMsPos(int stateId);
+	
+	void pushState();
+	void popState();
+	void flushStack();
 };
 
 extern SoundPlayer *g_sound;

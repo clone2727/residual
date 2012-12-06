@@ -15,9 +15,12 @@ MODULE_OBJS := \
 	costume/sound_component.o \
 	costume/sprite_component.o \
 	emi/costume/emianim_component.o \
+	emi/costume/emiluavar_component.o \
+	emi/costume/emiluacode_component.o \
 	emi/costume/emimesh_component.o \
 	emi/costume/emiskel_component.o \
 	emi/costume/emisprite_component.o \
+	emi/costume/emitexi_component.o \
 	emi/sound/aifftrack.o \
 	emi/sound/mp3track.o \
 	emi/sound/scxtrack.o \
@@ -29,6 +32,7 @@ MODULE_OBJS := \
 	emi/costumeemi.o \
 	emi/modelemi.o \
 	emi/skeleton.o \
+	emi/poolsound.o \
 	emi/lua_v2.o \
 	emi/lua_v2_actor.o \
 	emi/lua_v2_sound.o \
@@ -99,6 +103,7 @@ MODULE_OBJS := \
 	lua_v1.o \
 	lua_v1_actor.o \
 	lua_v1_graphics.o \
+	lua_v1_set.o \
 	lua_v1_sound.o \
 	lua_v1_text.o \
 	material.o \

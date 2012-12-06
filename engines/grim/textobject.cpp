@@ -25,7 +25,6 @@
 #include "engines/grim/textobject.h"
 #include "engines/grim/savegame.h"
 #include "engines/grim/lua.h"
-#include "engines/grim/lua/lua.h"
 #include "engines/grim/font.h"
 #include "engines/grim/gfx_base.h"
 #include "engines/grim/color.h"
@@ -121,11 +120,11 @@ void TextObject::setDefaults(TextObjectDefaults *defaults) {
 	_justify = defaults->getJustify();
 }
 
-int TextObject::getBitmapWidth() {
+int TextObject::getBitmapWidth() const {
 	return _maxLineWidth;
 }
 
-int TextObject::getBitmapHeight() {
+int TextObject::getBitmapHeight() const {
 	return _numberLines * _font->getHeight();
 }
 
@@ -159,13 +158,11 @@ void TextObject::reposition() {
 				_posX = _posX + 640;
 			if (_justify == CENTER && _posX == 0)
 				_posX = 320;
-		} else if (g_grim->getMode() == GrimEngine::OverworldMode) {
-			_posX = 320 + _posX;
-			_posY = 240 - _posY;
 		} else {
 			_posX = 320 + _posX;
-			_posY = abs(_posY);
+			_posY = 240 - _posY;
 		}
+
 		Debug::debug(Debug::TextObjects, "Repositioning (%d, %d) -> (%d, %d)", _x, _y, _posX, _posY);
 		assert(0 <= _posX && _posX <= 640);
 		assert(0 <= _posY && _posY <= 480);
@@ -173,13 +170,6 @@ void TextObject::reposition() {
 }
 
 void TextObject::setupText() {
-	if (_font == NULL) {
-		// use lua_error her and not a regular error as this should be recoverable
-		// and it is most likly a script error, but it will still help to see the
-		// lua stack trace
-		lua_error("TextObject::setupText font null");
-	}
-
 	Common::String msg = LuaBase::instance()->parseMsgText(_textID.c_str(), NULL);
 	Common::String message;
 
@@ -310,7 +300,7 @@ void TextObject::setupText() {
 	_elapsedTime = 0;
 }
 
-int TextObject::getLineX(int line) {
+int TextObject::getLineX(int line) const {
 	int x = _posX;
 	if (_justify == CENTER)
 		x = _posX - (_font->getStringLength(_lines[line]) / 2);
@@ -322,7 +312,7 @@ int TextObject::getLineX(int line) {
 	return x;
 }
 
-int TextObject::getLineY(int line) {
+int TextObject::getLineY(int line) const {
 	int y = _posY;
 	if (_blastDraw)
 		y = _posY + 5;
